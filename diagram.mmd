@@ -1,0 +1,43 @@
+flowchart LR
+  user((User)) -->|HTTP 5446| gw[Gateway]
+  gw -->|TCP 5446| sb[Sandbox ttyd]
+  sb -->|AWS API| ls[LocalStack]
+
+  subgraph Host
+    gw
+  end
+
+  subgraph Sandbox_Net[Internal Network]
+    sb
+    ls
+    subgraph Tooling[Sandbox Tooling]
+      tf[Terraform]
+      pul[Pulumi (Python)]
+      ans[Ansible]
+      awscli[AWS CLI]
+    end
+  end
+
+  tf --> ls
+  pul --> ls
+  ans --> ls
+  awscli --> ls
+
+  subgraph HA_Resources[HA Reference Resources (per region)]
+    vpc[VPC]
+    pub[Public Subnets]
+    priv[Private Subnets]
+    igw[Internet Gateway]
+    nat[NAT Gateways]
+    alb[ALB]
+    asg[Auto Scaling Group]
+    rds[RDS (Multi-AZ)]
+    r53[Route 53 Private DNS]
+    s3[S3 (SSE + Block Public)]
+  end
+
+  ls --> HA_Resources
+
+  style gw fill:#dbeafe,stroke:#1e3a8a
+  style sb fill:#e0f2fe,stroke:#0c4a6e
+  style ls fill:#ecfccb,stroke:#365314
