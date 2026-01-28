@@ -1,0 +1,5 @@
+- name: LocalStack AWS practice via awscli
+  hosts: local
+  gather_facts: false
+  roles:
+    - localstack_s3

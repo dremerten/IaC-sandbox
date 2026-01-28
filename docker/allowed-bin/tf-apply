@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${LOCALSTACK_AUTH_TOKEN:-}" ] || [ -n "${LOCALSTACK_API_KEY:-}" ]; then
+  export TF_VAR_localstack_pro=true
+else
+  export TF_VAR_localstack_pro=${LOCALSTACK_PRO:-false}
+fi
+/workspace/.terraform-bin/terraform -chdir=/home/sandbox/workspace/terraform apply -auto-approve "$@"

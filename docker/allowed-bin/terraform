@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+export TF_CLI_CONFIG_FILE=/opt/terraformrc
+if [ -n "${LOCALSTACK_AUTH_TOKEN:-}" ] || [ -n "${LOCALSTACK_API_KEY:-}" ]; then
+  export TF_VAR_localstack_pro=true
+else
+  export TF_VAR_localstack_pro=${LOCALSTACK_PRO:-false}
+fi
+exec /workspace/.terraform-bin/terraform -chdir=/home/sandbox/workspace/terraform "$@"

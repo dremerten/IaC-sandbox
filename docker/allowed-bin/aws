@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+case " $* " in
+  *" --endpoint-url "*)
+    exec /workspace/.aws-cli-bin/aws "$@"
+    ;;
+  *)
+    exec /workspace/.aws-cli-bin/aws --endpoint-url "${LOCALSTACK_ENDPOINT:-http://localstack:4566}" "$@"
+    ;;
+esac

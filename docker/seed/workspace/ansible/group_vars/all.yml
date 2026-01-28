@@ -1,0 +1,5 @@
+endpoint: "{{ lookup('env', 'LOCALSTACK_ENDPOINT') | default('http://localstack:4566', true) }}"
+region: "{{ lookup('env', 'AWS_DEFAULT_REGION') | default('us-east-1', true) }}"
+bucket_name: sandbox-ansible-bucket
+object_key: hello.txt
+object_source: /workspace/terraform/files/hello.txt

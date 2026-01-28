@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+export ANSIBLE_CONFIG=/home/sandbox/workspace/ansible/ansible.cfg
+export ANSIBLE_LOCAL_TEMP=/workspace/.ansible/tmp
+export ANSIBLE_REMOTE_TMP=/workspace/.ansible/tmp
+export ANSIBLE_SHELL_EXECUTABLE=/bin/bash
+export ANSIBLE_PYTHON_INTERPRETER=/opt/venv/bin/python
+
+exec /opt/venv/bin/ansible-playbook "$@"

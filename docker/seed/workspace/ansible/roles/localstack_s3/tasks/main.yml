@@ -1,0 +1,28 @@
+- name: Create S3 bucket
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ endpoint }}
+    --region {{ region }}
+    s3api create-bucket --bucket {{ bucket_name }}
+  register: create_bucket
+  failed_when: create_bucket.rc != 0 and 'BucketAlreadyOwnedByYou' not in create_bucket.stderr
+  changed_when: create_bucket.rc == 0
+
+- name: Put object
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ endpoint }}
+    --region {{ region }}
+    s3api put-object --bucket {{ bucket_name }} --key {{ object_key }} --body {{ object_source }}
+  register: put_object
+  changed_when: put_object.rc == 0
+
+- name: List buckets
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ endpoint }}
+    --region {{ region }}
+    s3api list-buckets
+  register: list_buckets
+  changed_when: false
+
+- name: Show buckets
+  ansible.builtin.debug:
+    var: list_buckets.stdout

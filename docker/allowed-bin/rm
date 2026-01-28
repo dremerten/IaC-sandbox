@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+base="/home/sandbox/workspace"
+
+for arg in "$@"; do
+  case "$arg" in
+    -*) continue ;;
+    /*)
+      case "$arg" in
+        "$base"|"$base"/*|"/workspace"|"/workspace"/*) ;;
+        *) echo "rm: access denied" >&2; exit 1 ;;
+      esac
+      ;;
+    *".."*) echo "rm: access denied" >&2; exit 1 ;;
+  esac
+done
+
+exec /bin/rm "$@"

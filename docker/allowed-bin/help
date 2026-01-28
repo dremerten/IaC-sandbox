@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+cat <<'MSG'
+Allowed commands:
+  aws
+  terraform
+  tf-init
+  tf-apply
+  ansible
+  ansible-playbook
+  ansible-run
+  pulumi
+  pulumi-python
+  vim
+  make
+  mkdir
+  rm
+  chmod
+  sleep
+  ls
+  cat
+  pwd
+  whoami
+  id
+
+Notes:
+- Login shell allows `cd` so you can move into `terraform/`, `ansible/`, and `pulumi/python`.
+- Terraform and Pulumi providers are bundled for offline use.
+- Use `vim` to edit files inside `/workspace`.
+MSG

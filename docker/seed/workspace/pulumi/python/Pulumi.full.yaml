@@ -1,0 +1,6 @@
+config:
+  sandbox-ha-python:simulateUnsupported: false
+  sandbox-ha-python:primaryRegion: us-east-1
+  sandbox-ha-python:secondaryRegion: us-west-2
+  sandbox-ha-python:dbUsername: 5c7fcc53-bccd-48f9-91d8-908ff82b4644
+  sandbox-ha-python:dbPassword: 5636f63b-8e18-46a0-a6bf-f1637e8b3fa5
