@@ -1,0 +1,757 @@
+#!/bin/sh
+set -eu
+
+tf_dir="/home/sandbox/workspace/terraform"
+vars_file="${tf_dir}/interactive.auto.tfvars"
+
+if [ ! -d "$tf_dir" ]; then
+  echo "tf-interactive: terraform directory not found: $tf_dir" >&2
+  exit 1
+fi
+
+if [ -n "${LOCALSTACK_AUTH_TOKEN:-}" ] || [ -n "${LOCALSTACK_API_KEY:-}" ] || [ "${LOCALSTACK_PRO:-false}" = "true" ]; then
+  export TF_VAR_localstack_pro=true
+else
+  export TF_VAR_localstack_pro=false
+fi
+
+if [ "${TF_VAR_localstack_pro:-false}" = "true" ]; then
+  community_only=false
+  simulate_unsupported=false
+  localstack_pro=true
+else
+  community_only=true
+  simulate_unsupported=true
+  localstack_pro=false
+fi
+
+echo "Tip: type 'back' at any prompt to change the previous answer."
+
+BACK=0
+
+prompt() {
+  var_name="$1"
+  prompt_text="$2"
+  default_value="$3"
+  if [ -n "$default_value" ]; then
+    printf "%s [%s]: " "$prompt_text" "$default_value"
+  else
+    printf "%s: " "$prompt_text"
+  fi
+  IFS= read -r input || true
+  if [ "$input" = "back" ] || [ "$input" = "b" ]; then
+    BACK=1
+    return 0
+  fi
+  if [ -z "$input" ]; then
+    input="$default_value"
+  fi
+  BACK=0
+  eval "$var_name=\$input"
+}
+
+parse_cidr_mask() {
+  cidr="$1"
+  case "$cidr" in
+    */*) ;;
+    *) echo "Invalid CIDR (missing /): $cidr" >&2; return 1 ;;
+  esac
+  mask="${cidr##*/}"
+  ip="${cidr%/*}"
+  case "$mask" in
+    ''|*[!0-9]*) echo "Invalid CIDR mask: $cidr" >&2; return 1 ;;
+  esac
+  if [ "$mask" -lt 0 ] || [ "$mask" -gt 32 ]; then
+    echo "CIDR mask out of range (0-32): $cidr" >&2
+    return 1
+  fi
+  case "$ip" in
+    *.*.*.*) ;;
+    *) echo "Invalid CIDR address: $cidr" >&2; return 1 ;;
+  esac
+  echo "$mask"
+}
+
+calc_mask_for_ips() {
+  ips="$1"
+  case "$ips" in
+    ''|*[!0-9]*) echo "Invalid IP count: $ips" >&2; return 1 ;;
+  esac
+  if [ "$ips" -le 0 ]; then
+    echo "IP count must be greater than 0." >&2
+    return 1
+  fi
+  pow=1
+  bits=0
+  while [ "$pow" -lt "$ips" ]; do
+    pow=$((pow * 2))
+    bits=$((bits + 1))
+  done
+  if [ "$bits" -gt 32 ]; then
+    echo "IP count too large: $ips" >&2
+    return 1
+  fi
+  echo $((32 - bits))
+}
+
+calc_available_subnets() {
+  newbits_relative="$1"
+  if [ "$newbits_relative" -lt 0 ]; then
+    echo 0
+    return
+  fi
+  echo $((1 << newbits_relative))
+}
+
+run_with_progress() {
+  label="$1"
+  log_file="$2"
+  shift 2
+  start_time="$(/bin/date +%s)"
+  ( "$@" >"$log_file" 2>&1 ) &
+  pid=$!
+  frames='[>.........] [=>........] [==>.......] [===>......] [====>.....] [=====>....] [======>...] [=======>..] [========>.] [=========>]'
+  set -- $frames
+  frame_count=$#
+  idx=0
+  while kill -0 "$pid" 2>/dev/null; do
+    now="$(/bin/date +%s)"
+    elapsed=$((now - start_time))
+    idx=$(( (idx % frame_count) + 1 ))
+    frame=$(eval "printf '%s' \${$idx}")
+    printf "\r%s %s %02d:%02d" "$label" "$frame" $((elapsed / 60)) $((elapsed % 60)) >&2
+    sleep 0.2
+  done
+  wait "$pid"
+  status=$?
+  printf "\n" >&2
+  if [ "$status" -ne 0 ]; then
+    echo "❌ ${label} failed." >&2
+    echo "Last 20 lines:" >&2
+    /usr/bin/tail -n 20 "$log_file" || true
+  else
+    echo "✅ ${label} complete." >&2
+  fi
+  echo "Log: $log_file" >&2
+  return "$status"
+}
+
+print_summary() {
+  echo ""
+  echo "┌──────────────────────────────────────────┐"
+  echo "│   🚀 Terraform Mission Accomplished!     │"
+  echo "└──────────────────────────────────────────┘"
+  echo ""
+  echo "✨ What happened:"
+  echo "- Terraform built a small practice environment in two regions using LocalStack."
+  echo "- Your choices were saved to: ${vars_file}"
+  echo ""
+  echo "🧭 What was deployed (simple explanations):"
+  echo "- Virtual networks (VPCs): private \"mini data centers\" where resources live."
+  echo "- Subnets: smaller sections inside each network, like rooms in a building."
+  echo "- Internet gateway + routes: how traffic can enter/leave the network."
+  echo "- Security groups: basic firewall rules that control who can talk to what."
+  echo "- S3 bucket: shared storage, like a durable file cabinet."
+  echo "- IAM role/profile: a safe identity so services can access the bucket."
+  echo "- Simulated components: mock EC2 instances so counts match your input."
+  if [ "${enable_community_services:-false}" = "true" ]; then
+    echo ""
+    echo "🎛️  Community services bundle:"
+    echo "- DynamoDB table: a fast key/value database."
+    echo "- SQS queue: a mailbox for background tasks."
+    echo "- SNS topic: a broadcaster that can notify many subscribers."
+    if [ "${enable_lambda:-false}" = "true" ]; then
+      echo "- Lambda function: small code that runs on demand."
+    fi
+    echo "- API Gateway: a simple HTTP API entry point."
+    echo "- EventBridge rule: a time-based or event-based trigger."
+    echo "- Scheduler schedule: a managed timer that runs on a schedule."
+    echo "- Step Functions: a visual workflow that chains steps together."
+    echo "- CloudWatch log group: a place to store logs."
+    echo "- CloudWatch alarm: a rule that watches metrics and can alert."
+    echo "- SSM parameter: a secure place for configuration values."
+    echo "- CloudFormation stack: a saved blueprint of resources."
+    echo "- Route 53 private zone: internal DNS names for your network."
+    echo "- Route 53 resolver: DNS endpoint inside the network."
+    if [ "${enable_opensearch:-false}" = "true" ]; then
+      echo "- OpenSearch domain: a search/index service."
+    fi
+    echo "- Redshift cluster: a data warehouse for analytics."
+    echo "- SES identity: setup for sending email."
+  fi
+  echo ""
+  echo "🧪 Next steps:"
+  echo "- Recommended: run \"make aws-overview\" to see all deployed resources."
+  echo "- Re-run tf-interactive with action=edit or destroy if you want to change it."
+}
+
+strip_quotes() {
+  val="$1"
+  val="${val#\"}"
+  val="${val%\"}"
+  echo "$val"
+}
+
+load_defaults() {
+  file="$1"
+  [ -f "$file" ] || return 0
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    case "$line" in
+      *"="*) ;;
+      *) continue ;;
+    esac
+    key="$(printf '%s' "$line" | /usr/bin/awk -F= '{print $1}' | /usr/bin/sed 's/[[:space:]]//g')"
+    val="$(printf '%s' "$line" | /usr/bin/awk -F= '{print $2}' | /usr/bin/sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    case "$key" in
+      name_prefix) name_prefix_default="$(strip_quotes "$val")" ;;
+      primary_vpc_cidr) primary_vpc_cidr_default="$(strip_quotes "$val")" ;;
+      secondary_vpc_cidr) secondary_vpc_cidr_default="$(strip_quotes "$val")" ;;
+      az_count) az_count_default="$val" ;;
+      enable_private_subnets)
+        case "$val" in
+          true) enable_private_default="y" ;;
+          false) enable_private_default="n" ;;
+        esac
+        ;;
+      public_subnet_count) public_subnet_count_default="$val" ;;
+      private_subnet_count) private_subnet_count_default="$val" ;;
+      public_subnet_newbits) public_subnet_newbits_default="$val" ;;
+      private_subnet_newbits) private_subnet_newbits_default="$val" ;;
+      db_engine) db_engine_default="$(strip_quotes "$val")" ;;
+      db_engine_version) db_engine_version_default="$(strip_quotes "$val")" ;;
+      enable_community_services)
+        case "$val" in
+          true) enable_community_services_default="y" ;;
+          false) enable_community_services_default="n" ;;
+        esac
+        ;;
+      enable_lambda)
+        case "$val" in
+          true) enable_lambda_default="y" ;;
+          false) enable_lambda_default="n" ;;
+        esac
+        ;;
+      enable_opensearch)
+        case "$val" in
+          true) enable_opensearch_default="y" ;;
+          false) enable_opensearch_default="n" ;;
+        esac
+        ;;
+      app_instance_type) app_instance_type_default="$(strip_quotes "$val")" ;;
+      asg_min_size) asg_min_size_default="$val" ;;
+      asg_max_size) asg_max_size_default="$val" ;;
+      asg_desired_capacity) asg_desired_capacity_default="$val" ;;
+      db_instance_class) db_instance_class_default="$(strip_quotes "$val")" ;;
+    esac
+  done < "$file"
+}
+
+vars_exists=false
+if [ -f "$vars_file" ]; then
+  vars_exists=true
+fi
+
+mode_default="new"
+if [ "$vars_exists" = "true" ]; then
+  mode_default="edit"
+fi
+
+while :; do
+  prompt mode "Choose action (new/edit/destroy)" "$mode_default"
+  if [ "$BACK" = "1" ]; then
+    continue
+  fi
+  case "$mode" in
+    new|edit|destroy) ;;
+    *) echo "Please answer new, edit, or destroy." >&2; continue ;;
+  esac
+
+  if [ "$mode" = "edit" ] || [ "$mode" = "destroy" ]; then
+    if [ "$vars_exists" = "true" ]; then
+      load_defaults "$vars_file"
+      echo "Loaded previous settings from $vars_file"
+    else
+      echo "No saved config found at $vars_file; starting a new setup." >&2
+      mode="new"
+    fi
+  fi
+
+  if [ "$mode" = "destroy" ] && [ "$vars_exists" = "true" ]; then
+    prompt destroy_confirm "Destroy existing infrastructure using saved config? (y/back)" "y"
+    if [ "$BACK" = "1" ]; then
+      continue
+    fi
+    case "$destroy_confirm" in
+      y|Y|yes|YES) action="destroy"; skip_prompts=1; break ;;
+      back|b|B) continue ;;
+      *) echo "Please answer y or back." >&2; continue ;;
+    esac
+  fi
+
+  break
+done
+
+primary_vpc_cidr_default="${primary_vpc_cidr_default:-10.0.0.0/16}"
+secondary_vpc_cidr_default="${secondary_vpc_cidr_default:-10.1.0.0/16}"
+az_count_default="${az_count_default:-3}"
+enable_private_default="${enable_private_default:-y}"
+db_engine_default="${db_engine_default:-mysql}"
+enable_community_services_default="${enable_community_services_default:-y}"
+enable_lambda_default="${enable_lambda_default:-n}"
+enable_opensearch_default="${enable_opensearch_default:-n}"
+enable_lambda=false
+enable_opensearch=false
+db_engine_choice_default="1"
+case "$db_engine_default" in
+  mysql) db_engine_choice_default="1" ;;
+  mariadb) db_engine_choice_default="2" ;;
+  postgres) db_engine_choice_default="3" ;;
+  aurora-mysql) db_engine_choice_default="4" ;;
+esac
+asg_desired_capacity_default="${asg_desired_capacity_default:-3}"
+asg_min_size_default="${asg_min_size_default:-}"
+asg_max_size_default="${asg_max_size_default:-6}"
+app_instance_choice_default="${app_instance_type_default:-1}"
+db_instance_choice_default="${db_instance_class_default:-1}"
+
+default_name_prefix="${name_prefix_default:-iac-sandbox-$(/bin/date +%H%M%S 2>/dev/null || echo iac-sandbox)}"
+
+if [ "${skip_prompts:-0}" = "1" ]; then
+  echo "🔧 Running: terraform init"
+  /workspace/.terraform-bin/terraform -chdir="$tf_dir" init -input=false >/dev/null
+  run_with_progress "🧹 Destroying infrastructure" "${tf_dir}/interactive.destroy.log" \
+    /workspace/.terraform-bin/terraform -chdir="$tf_dir" destroy -auto-approve -var-file="$vars_file"
+  exit $?
+fi
+
+step=1
+while :; do
+  case "$step" in
+    1)
+      prompt primary_vpc_cidr "Primary VPC CIDR" "$primary_vpc_cidr_default"
+      if [ "$BACK" = "1" ]; then step=1; continue; fi
+      if ! primary_mask="$(parse_cidr_mask "$primary_vpc_cidr")"; then continue; fi
+      step=$((step + 1))
+      ;;
+    2)
+      prompt secondary_vpc_cidr "Secondary VPC CIDR" "$secondary_vpc_cidr_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      if ! secondary_mask="$(parse_cidr_mask "$secondary_vpc_cidr")"; then continue; fi
+      if [ "$primary_mask" != "$secondary_mask" ]; then
+        echo "Primary and secondary VPC CIDR masks must match (got $primary_mask and $secondary_mask)." >&2
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    3)
+      prompt name_prefix "Name prefix for resources" "$default_name_prefix"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      step=$((step + 1))
+      ;;
+    4)
+      prompt az_count "Number of availability zones per region" "$az_count_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$az_count" in
+        ''|*[!0-9]*) echo "Invalid AZ count: $az_count" >&2; continue ;;
+      esac
+      if [ "$az_count" -lt 1 ] || [ "$az_count" -gt 6 ]; then
+        echo "AZ count must be between 1 and 6." >&2
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    5)
+      prompt enable_private "Create private subnets? (y/n)" "$enable_private_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$enable_private" in
+        y|Y|yes|YES) enable_private_subnets=true ;;
+        n|N|no|NO) enable_private_subnets=false ;;
+        *) echo "Please answer y or n for private subnets." >&2; continue ;;
+      esac
+      step=$((step + 1))
+      ;;
+    6)
+      public_subnet_count_default="${public_subnet_count_default:-$az_count}"
+      prompt public_subnet_count "Number of public subnets" "$public_subnet_count_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$public_subnet_count" in
+        ''|*[!0-9]*) echo "Invalid public subnet count: $public_subnet_count" >&2; continue ;;
+      esac
+      if [ "$public_subnet_count" -lt 1 ]; then
+        echo "Public subnet count must be at least 1." >&2
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    7)
+      public_ips_default="256"
+      case "${public_subnet_newbits_default:-}" in
+        ''|*[!0-9]*) ;;
+        *)
+          public_mask_default=$((primary_mask + public_subnet_newbits_default))
+          if [ "$public_mask_default" -ge 0 ] && [ "$public_mask_default" -le 32 ]; then
+            public_ips_default=$((1 << (32 - public_mask_default)))
+          fi
+          ;;
+      esac
+      prompt public_ips "IPs per public subnet" "$public_ips_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      if ! public_mask="$(calc_mask_for_ips "$public_ips")"; then continue; fi
+      if [ "$public_mask" -lt "$primary_mask" ]; then
+        echo "Public subnet mask /$public_mask cannot be larger than the VPC mask /$primary_mask." >&2
+        continue
+      fi
+      if [ "$enable_private_subnets" = "true" ]; then
+        step=$((step + 1))
+        continue
+      fi
+
+      private_subnet_count=0
+      private_mask="$public_mask"
+
+      public_newbits=$((public_mask - primary_mask))
+      private_newbits=$((private_mask - primary_mask))
+      public_available="$(calc_available_subnets "$public_newbits")"
+      if [ "$public_available" -lt "$public_subnet_count" ]; then
+        echo "Public subnet count ($public_subnet_count) exceeds capacity for /$public_mask in the VPC (max $public_available)." >&2
+        continue
+      fi
+      step=10
+      ;;
+    8)
+      private_subnet_count_default="${private_subnet_count_default:-$az_count}"
+      prompt private_subnet_count "Number of private subnets" "$private_subnet_count_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$private_subnet_count" in
+        ''|*[!0-9]*) echo "Invalid private subnet count: $private_subnet_count" >&2; continue ;;
+      esac
+      if [ "$private_subnet_count" -lt 1 ]; then
+        echo "Private subnet count must be at least 1." >&2
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    9)
+      private_ips_default="256"
+      case "${private_subnet_newbits_default:-}" in
+        ''|*[!0-9]*) ;;
+        *)
+          private_mask_default=$((primary_mask + private_subnet_newbits_default))
+          if [ "$private_mask_default" -ge 0 ] && [ "$private_mask_default" -le 32 ]; then
+            private_ips_default=$((1 << (32 - private_mask_default)))
+          fi
+          ;;
+      esac
+      prompt private_ips "IPs per private subnet" "$private_ips_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      if ! private_mask="$(calc_mask_for_ips "$private_ips")"; then continue; fi
+      if [ "$public_mask" -le "$primary_mask" ] || [ "$private_mask" -le "$primary_mask" ]; then
+        echo "With private subnets enabled, subnet masks must be greater than the VPC mask ($primary_mask)." >&2
+        continue
+      fi
+      if [ "$private_mask" -lt "$primary_mask" ]; then
+        echo "Private subnet mask /$private_mask cannot be larger than the VPC mask /$primary_mask." >&2
+        continue
+      fi
+
+      public_newbits=$((public_mask - primary_mask))
+      private_newbits=$((private_mask - primary_mask))
+      public_available="$(calc_available_subnets "$((public_newbits - 1))")"
+      private_available="$(calc_available_subnets "$((private_newbits - 1))")"
+      if [ "$public_available" -lt "$public_subnet_count" ]; then
+        echo "Public subnet count ($public_subnet_count) exceeds capacity for /$public_mask in half of the VPC (max $public_available)." >&2
+        continue
+      fi
+      if [ "$private_available" -lt "$private_subnet_count" ]; then
+        echo "Private subnet count ($private_subnet_count) exceeds capacity for /$private_mask in half of the VPC (max $private_available)." >&2
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    10)
+      if [ "$community_only" = "true" ]; then
+        db_engine="mysql"
+        db_engine_version=""
+        step=12
+        continue
+      fi
+      echo "RDS engine:"
+      echo "  1) mysql"
+      echo "  2) mariadb"
+      echo "  3) postgres"
+      echo "  4) aurora-mysql"
+      prompt db_engine_choice "Select 1-4 (or type engine)" "$db_engine_choice_default"
+      if [ "$BACK" = "1" ]; then
+        if [ "$enable_private_subnets" = "true" ]; then
+          step=$((step - 1))
+        else
+          step=7
+        fi
+        continue
+      fi
+      case "$db_engine_choice" in
+        1|mysql|MYSQL|MySQL) db_engine="mysql" ;;
+        2|mariadb|MariaDB|MARIADB) db_engine="mariadb" ;;
+        3|postgres|Postgres|POSTGRES|postgresql|PostgreSQL|POSTGRESQL) db_engine="postgres" ;;
+        4|aurora-mysql|Aurora-MySQL|AURORA-MYSQL) db_engine="aurora-mysql" ;;
+        *) echo "Unsupported RDS engine: $db_engine_choice" >&2; continue ;;
+      esac
+      step=$((step + 1))
+      ;;
+    11)
+      case "$db_engine" in
+        mysql)
+          ga_version="8.4.7"
+          ga_minus1="8.4.6"
+          ;;
+        mariadb)
+          ga_version="11.8.5"
+          ga_minus1="11.8.3"
+          ;;
+        postgres)
+          ga_version="18.1"
+          ga_minus1="17.7"
+          ;;
+        aurora-mysql)
+          ga_version="3.11.1"
+          ga_minus1="3.11.0"
+          ;;
+      esac
+      db_version_choice_default="1"
+      if [ -n "${db_engine_version_default:-}" ]; then
+        if [ "$db_engine_version_default" = "$ga_version" ]; then
+          db_version_choice_default="1"
+        elif [ "$db_engine_version_default" = "$ga_minus1" ]; then
+          db_version_choice_default="2"
+        else
+          db_version_choice_default="c"
+        fi
+      fi
+      echo "RDS engine version:"
+      echo "  1) ${ga_version} (GA)"
+      echo "  2) ${ga_minus1} (GA-1)"
+      echo "  0) provider default"
+      echo "  c) custom"
+      prompt db_version_choice "Select 0/1/2/c (or type a version)" "$db_version_choice_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$db_version_choice" in
+        1) db_engine_version="$ga_version" ;;
+        2) db_engine_version="$ga_minus1" ;;
+        0) db_engine_version="" ;;
+        c|C|custom)
+          prompt db_engine_version "Enter engine version" "${db_engine_version_default:-}"
+          if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+          ;;
+        *) db_engine_version="$db_version_choice" ;;
+      esac
+      step=$((step + 1))
+      ;;
+    12)
+      echo "EC2 instance types (vCPU / GiB):"
+      echo "  1) t3.micro    - 2 vCPU / 1 GiB"
+      echo "  2) t3.small    - 2 vCPU / 2 GiB"
+      echo "  3) t3.medium   - 2 vCPU / 4 GiB"
+      echo "  4) t3.large    - 2 vCPU / 8 GiB"
+      echo "  5) t3.xlarge   - 4 vCPU / 16 GiB"
+      echo "  6) t3.2xlarge  - 8 vCPU / 32 GiB"
+      echo "  7) t4g.micro   - 2 vCPU / 1 GiB"
+      echo "  8) t4g.small   - 2 vCPU / 2 GiB"
+      echo "  9) t4g.medium  - 2 vCPU / 4 GiB"
+      echo " 10) t4g.large   - 2 vCPU / 8 GiB"
+      echo " 11) t4g.xlarge  - 4 vCPU / 16 GiB"
+      echo " 12) t4g.2xlarge - 8 vCPU / 32 GiB"
+      prompt app_instance_choice "Select 1-12 (or type a type)" "$app_instance_choice_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$app_instance_choice" in
+        1) app_instance_type="t3.micro" ;;
+        2) app_instance_type="t3.small" ;;
+        3) app_instance_type="t3.medium" ;;
+        4) app_instance_type="t3.large" ;;
+        5) app_instance_type="t3.xlarge" ;;
+        6) app_instance_type="t3.2xlarge" ;;
+        7) app_instance_type="t4g.micro" ;;
+        8) app_instance_type="t4g.small" ;;
+        9) app_instance_type="t4g.medium" ;;
+        10) app_instance_type="t4g.large" ;;
+        11) app_instance_type="t4g.xlarge" ;;
+        12) app_instance_type="t4g.2xlarge" ;;
+        *) app_instance_type="$app_instance_choice" ;;
+      esac
+      step=$((step + 1))
+      ;;
+    13)
+      prompt asg_desired_capacity "Desired EC2 instances" "$asg_desired_capacity_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$asg_desired_capacity" in
+        ''|*[!0-9]*) echo "Invalid EC2 instance count: $asg_desired_capacity" >&2; continue ;;
+      esac
+      if [ "$community_only" = "true" ]; then
+        asg_min_size="${asg_min_size_default:-$asg_desired_capacity}"
+        asg_max_size="${asg_max_size_default:-$asg_desired_capacity}"
+        db_instance_class="${db_instance_class_default:-db.t4g.small}"
+        step=16
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    14)
+      asg_min_default="${asg_min_size_default:-$asg_desired_capacity}"
+      prompt asg_min_size "Minimum EC2 instances" "$asg_min_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$asg_min_size" in
+        ''|*[!0-9]*) echo "Invalid EC2 instance count: $asg_min_size" >&2; continue ;;
+      esac
+      if [ "$asg_min_size" -gt "$asg_desired_capacity" ]; then
+        echo "Minimum EC2 instances cannot exceed desired capacity." >&2
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    15)
+      prompt asg_max_size "Maximum EC2 instances" "$asg_max_size_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$asg_max_size" in
+        ''|*[!0-9]*) echo "Invalid EC2 instance count: $asg_max_size" >&2; continue ;;
+      esac
+      if [ "$asg_max_size" -lt "$asg_desired_capacity" ]; then
+        echo "Maximum EC2 instances cannot be less than desired capacity." >&2
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    16)
+      echo "Community services bundle = databases, queues, APIs, workflows, and monitoring so you can practice real AWS patterns."
+      prompt enable_community_services_choice "Deploy Community services bundle? (y/n)" "$enable_community_services_default"
+      if [ "$BACK" = "1" ]; then
+        step=$((step - 1))
+        continue
+      fi
+      case "$enable_community_services_choice" in
+        y|Y|yes|YES) enable_community_services=true ;;
+        n|N|no|NO) enable_community_services=false ;;
+        *) echo "Please answer y or n." >&2; continue ;;
+      esac
+      if [ "$enable_community_services" = "false" ]; then
+        enable_lambda=false
+        enable_opensearch=false
+        if [ "$community_only" = "true" ]; then
+          step=20
+        else
+          step=19
+        fi
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    17)
+      enable_lambda=false
+      step=$((step + 1))
+      ;;
+    18)
+      enable_opensearch=false
+      if [ "$community_only" = "true" ]; then
+        step=20
+        continue
+      fi
+      step=$((step + 1))
+      ;;
+    19)
+      echo "RDS instance classes (vCPU / GiB):"
+      echo "  1) db.t4g.micro    - 2 vCPU / 1 GiB"
+      echo "  2) db.t4g.small    - 2 vCPU / 2 GiB"
+      echo "  3) db.t4g.medium   - 2 vCPU / 4 GiB"
+      echo "  4) db.t4g.large    - 2 vCPU / 8 GiB"
+      echo "  5) db.t4g.xlarge   - 4 vCPU / 16 GiB"
+      echo "  6) db.t4g.2xlarge  - 8 vCPU / 32 GiB"
+      echo "  7) db.m7i.large    - 2 vCPU / 8 GiB"
+      echo "  8) db.m7i.xlarge   - 4 vCPU / 16 GiB"
+      echo "  9) db.m7i.2xlarge  - 8 vCPU / 32 GiB"
+      echo " 10) db.m7i.4xlarge  - 16 vCPU / 64 GiB"
+      echo " 11) db.m7i.8xlarge  - 32 vCPU / 128 GiB"
+      echo " 12) db.m7i.12xlarge - 48 vCPU / 192 GiB"
+      prompt db_instance_choice "Select 1-12 (or type a class)" "$db_instance_choice_default"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$db_instance_choice" in
+        1) db_instance_class="db.t4g.micro" ;;
+        2) db_instance_class="db.t4g.small" ;;
+        3) db_instance_class="db.t4g.medium" ;;
+        4) db_instance_class="db.t4g.large" ;;
+        5) db_instance_class="db.t4g.xlarge" ;;
+        6) db_instance_class="db.t4g.2xlarge" ;;
+        7) db_instance_class="db.m7i.large" ;;
+        8) db_instance_class="db.m7i.xlarge" ;;
+        9) db_instance_class="db.m7i.2xlarge" ;;
+        10) db_instance_class="db.m7i.4xlarge" ;;
+        11) db_instance_class="db.m7i.8xlarge" ;;
+        12) db_instance_class="db.m7i.12xlarge" ;;
+        db.*) db_instance_class="$db_instance_choice" ;;
+        *) echo "Invalid RDS instance class selection: $db_instance_choice" >&2; continue ;;
+      esac
+      step=$((step + 1))
+      ;;
+    20)
+      prompt apply_confirm "Apply or destroy with these settings? (apply/destroy/back)" "apply"
+      if [ "$BACK" = "1" ]; then step=$((step - 1)); continue; fi
+      case "$apply_confirm" in
+        apply|a|A) action="apply"; break ;;
+        destroy|d|D) action="destroy"; break ;;
+        back|b|B)
+          if [ "$community_only" = "true" ]; then
+            if [ "$enable_community_services" = "true" ]; then
+              step=18
+            else
+              step=16
+            fi
+          else
+            step=$((step - 1))
+          fi
+          continue
+          ;;
+        *) echo "Please answer apply, destroy, or back." >&2; continue ;;
+      esac
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+printf '%s\n' \
+  "name_prefix = \"${name_prefix}\"" \
+  "primary_vpc_cidr = \"${primary_vpc_cidr}\"" \
+  "secondary_vpc_cidr = \"${secondary_vpc_cidr}\"" \
+  "public_subnet_newbits = ${public_newbits}" \
+  "private_subnet_newbits = ${private_newbits}" \
+  "public_subnet_count = ${public_subnet_count}" \
+  "private_subnet_count = ${private_subnet_count}" \
+  "enable_private_subnets = ${enable_private_subnets}" \
+  "az_count = ${az_count}" \
+  "app_instance_type = \"${app_instance_type}\"" \
+  "asg_min_size = ${asg_min_size}" \
+  "asg_max_size = ${asg_max_size}" \
+  "asg_desired_capacity = ${asg_desired_capacity}" \
+  "simulate_unsupported = ${simulate_unsupported}" \
+  "localstack_pro = ${localstack_pro}" \
+  "enable_community_services = ${enable_community_services}" \
+  "enable_lambda = ${enable_lambda}" \
+  "enable_opensearch = ${enable_opensearch}" \
+  "db_instance_class = \"${db_instance_class}\"" \
+  "db_engine = \"${db_engine}\"" \
+  "db_engine_version = \"${db_engine_version}\"" \
+  > "$vars_file"
+
+echo "🔧 Running: terraform init"
+/workspace/.terraform-bin/terraform -chdir="$tf_dir" init -input=false >/dev/null
+if [ "${action:-apply}" = "destroy" ]; then
+  run_with_progress "🧹 Destroying infrastructure" "${tf_dir}/interactive.destroy.log" \
+    /workspace/.terraform-bin/terraform -chdir="$tf_dir" destroy -auto-approve -var-file="$vars_file"
+else
+  run_with_progress "🚀 Building infrastructure" "${tf_dir}/interactive.apply.log" \
+    /workspace/.terraform-bin/terraform -chdir="$tf_dir" apply -auto-approve -var-file="$vars_file"
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    print_summary
+  fi
+  exit "$status"
+fi

@@ -1,5 +1,65 @@
-- name: LocalStack AWS practice via awscli
+- name: Terraform -> Ansible handoff (configure deployed infrastructure)
   hosts: local
   gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+  pre_tasks:
+    - name: Toolchain guide
+      ansible.builtin.debug:
+        msg:
+          - "Step 1: Terraform (make tf-interactive) builds the infrastructure."
+          - "Step 2: Ansible (make ansible-run) configures what Terraform created."
+          - "Step 3: AWS CLI (make aws-overview) verifies everything."
+
+    - name: Load Terraform outputs
+      block:
+        - ansible.builtin.command: /workspace/.terraform-bin/terraform -chdir=/workspace/terraform output -json
+          register: tf_output
+          changed_when: false
+      rescue:
+        - ansible.builtin.debug:
+            msg:
+              - "Terraform outputs not found."
+              - "Run: make tf-interactive"
+              - "Then run: make ansible-run"
+        - ansible.builtin.meta: end_play
+
+    - name: Parse Terraform outputs
+      ansible.builtin.set_fact:
+        tf_outputs: "{{ tf_output.stdout | from_json }}"
+
+    - name: Gather time facts for run id
+      ansible.builtin.setup:
+        gather_subset:
+          - date_time
+
+    - name: Derive Ansible inputs from Terraform outputs
+      ansible.builtin.set_fact:
+        localstack_endpoint: "{{ tf_outputs.localstack_endpoint.value | default(endpoint) }}"
+        primary_bucket: "{{ tf_outputs.primary_bucket.value | default('') }}"
+        secondary_bucket: "{{ tf_outputs.secondary_bucket.value | default('') }}"
+        primary_vpc_id: "{{ tf_outputs.primary_vpc_id.value | default('') }}"
+        secondary_vpc_id: "{{ tf_outputs.secondary_vpc_id.value | default('') }}"
+        primary_public_subnet_ids: "{{ tf_outputs.primary_public_subnet_ids.value | default([]) }}"
+        secondary_public_subnet_ids: "{{ tf_outputs.secondary_public_subnet_ids.value | default([]) }}"
+        primary_private_subnet_ids: "{{ tf_outputs.primary_private_subnet_ids.value | default([]) }}"
+        secondary_private_subnet_ids: "{{ tf_outputs.secondary_private_subnet_ids.value | default([]) }}"
+        primary_alb_dns: "{{ (tf_outputs.primary_alb_dns.value | default([])) | join(',') }}"
+        secondary_alb_dns: "{{ (tf_outputs.secondary_alb_dns.value | default([])) | join(',') }}"
+        primary_rds_endpoint: "{{ tf_outputs.primary_rds_endpoint.value | default('') }}"
+        secondary_rds_endpoint: "{{ tf_outputs.secondary_rds_endpoint.value | default('') }}"
+        simulate_unsupported: "{{ tf_outputs.simulate_unsupported.value | default(false) }}"
+        run_id: "{{ '%Y%m%d-%H%M%S' | strftime(ansible_facts.date_time.epoch | int) }}"
+        name_prefix: "{{ (tf_outputs.primary_bucket.value | default('')) | regex_replace('-primary-app$', '') | default('iac-sandbox', true) }}"
+
+    - name: Ensure Terraform outputs are present
+      ansible.builtin.assert:
+        that:
+          - primary_bucket | length > 0
+          - secondary_bucket | length > 0
+          - primary_vpc_id | length > 0
+          - secondary_vpc_id | length > 0
+        fail_msg: "Missing Terraform outputs. Re-run make tf-interactive."
+
   roles:
-    - localstack_s3
+    - localstack_configure

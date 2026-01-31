@@ -7,9 +7,12 @@ Allowed commands:
   terraform
   tf-init
   tf-apply
+  tf-interactive
+  localstack-cleanup
   ansible
   ansible-playbook
   ansible-run
+  ansible-plan
   ansible-destroy
   pulumi
   pulumi-python
@@ -19,6 +22,7 @@ Allowed commands:
   mkdir
   rm
   chmod
+  dircolors
   sleep
   ls
   cat

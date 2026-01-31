@@ -1,23 +1,105 @@
-- name: Destroy LocalStack S3 practice resources
+- name: Remove Ansible configuration artifacts
   hosts: local
   gather_facts: false
   vars_files:
     - group_vars/all.yml
-  tasks:
-    - name: Delete object (if present)
-      ansible.builtin.command: >-
-        aws --endpoint-url {{ endpoint }}
-        --region {{ region }}
-        s3api delete-object --bucket {{ bucket_name }} --key {{ object_key }}
-      register: delete_object
-      failed_when: delete_object.rc != 0 and 'NoSuchKey' not in delete_object.stderr
-      changed_when: delete_object.rc == 0
+  pre_tasks:
+    - name: Load Terraform outputs
+      block:
+        - ansible.builtin.command: /workspace/.terraform-bin/terraform -chdir=/workspace/terraform output -json
+          register: tf_output
+          changed_when: false
+      rescue:
+        - ansible.builtin.debug:
+            msg:
+              - "Terraform outputs not found."
+              - "Nothing to clean with Ansible."
+        - ansible.builtin.meta: end_play
 
-    - name: Delete bucket (if present)
+    - name: Parse Terraform outputs
+      ansible.builtin.set_fact:
+        tf_outputs: "{{ tf_output.stdout | from_json }}"
+
+    - name: Derive Ansible inputs from Terraform outputs
+      ansible.builtin.set_fact:
+        localstack_endpoint: "{{ tf_outputs.localstack_endpoint.value | default(endpoint) }}"
+        primary_bucket: "{{ tf_outputs.primary_bucket.value | default('') }}"
+        secondary_bucket: "{{ tf_outputs.secondary_bucket.value | default('') }}"
+        primary_vpc_id: "{{ tf_outputs.primary_vpc_id.value | default('') }}"
+        secondary_vpc_id: "{{ tf_outputs.secondary_vpc_id.value | default('') }}"
+        primary_public_subnet_ids: "{{ tf_outputs.primary_public_subnet_ids.value | default([]) }}"
+        secondary_public_subnet_ids: "{{ tf_outputs.secondary_public_subnet_ids.value | default([]) }}"
+        name_prefix: "{{ (tf_outputs.primary_bucket.value | default('')) | regex_replace('-primary-app$', '') | default('iac-sandbox', true) }}"
+
+  tasks:
+    - name: Find Ansible objects in primary bucket
       ansible.builtin.command: >-
-        aws --endpoint-url {{ endpoint }}
-        --region {{ region }}
-        s3api delete-bucket --bucket {{ bucket_name }}
-      register: delete_bucket
-      failed_when: delete_bucket.rc != 0 and 'NoSuchBucket' not in delete_bucket.stderr
-      changed_when: delete_bucket.rc == 0
+        aws --endpoint-url {{ localstack_endpoint }}
+        --region {{ primary_region }}
+        s3api list-objects-v2
+        --bucket {{ primary_bucket }}
+        --prefix ansible/
+        --query 'Contents[].Key'
+        --output text
+      register: ansible_keys_primary
+      changed_when: false
+      failed_when: false
+
+    - name: Delete Ansible objects in primary bucket
+      ansible.builtin.command: >-
+        aws --endpoint-url {{ localstack_endpoint }}
+        --region {{ primary_region }}
+        s3api delete-object
+        --bucket {{ primary_bucket }}
+        --key {{ item }}
+      loop: "{{ ansible_keys_primary.stdout.split() }}"
+      when: ansible_keys_primary.stdout | length > 0
+      changed_when: true
+
+    - name: Find Ansible objects in secondary bucket
+      ansible.builtin.command: >-
+        aws --endpoint-url {{ localstack_endpoint }}
+        --region {{ secondary_region }}
+        s3api list-objects-v2
+        --bucket {{ secondary_bucket }}
+        --prefix ansible/
+        --query 'Contents[].Key'
+        --output text
+      register: ansible_keys_secondary
+      changed_when: false
+      failed_when: false
+
+    - name: Delete Ansible objects in secondary bucket
+      ansible.builtin.command: >-
+        aws --endpoint-url {{ localstack_endpoint }}
+        --region {{ secondary_region }}
+        s3api delete-object
+        --bucket {{ secondary_bucket }}
+        --key {{ item }}
+      loop: "{{ ansible_keys_secondary.stdout.split() }}"
+      when: ansible_keys_secondary.stdout | length > 0
+      changed_when: true
+
+    - name: Delete Ansible SSM parameters
+      ansible.builtin.command: >-
+        aws --endpoint-url {{ localstack_endpoint }}
+        --region {{ item.region }}
+        ssm delete-parameter
+        --name {{ item.name }}
+      loop:
+        - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/localstack_endpoint" }
+        - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_bucket" }
+        - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_bucket" }
+        - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_vpc" }
+        - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_vpc" }
+        - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_subnets" }
+        - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_subnets" }
+        - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_private_subnets" }
+        - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_private_subnets" }
+        - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_alb_dns" }
+        - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_alb_dns" }
+        - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_rds_endpoint" }
+        - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_rds_endpoint" }
+        - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/simulate_unsupported" }
+      changed_when: true
+      failed_when: false

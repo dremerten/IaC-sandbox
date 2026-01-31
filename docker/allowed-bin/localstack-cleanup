@@ -1,0 +1,281 @@
+#!/bin/sh
+set -eu
+
+endpoint="${LOCALSTACK_ENDPOINT:-http://localstack:4566}"
+prefix="${CLEANUP_PREFIX:-}"
+regions="${AWS_REGIONS:-us-east-1 us-west-2}"
+
+echo "Cleaning LocalStack resources at ${endpoint}"
+if [ -n "${prefix}" ]; then
+  echo "Prefix filter for IAM resources: ${prefix}"
+else
+  echo "Prefix filter for IAM resources: <none>"
+fi
+echo "Regions: ${regions}"
+
+aws_global() {
+  aws --endpoint-url "$endpoint" "$@" 2>/dev/null || true
+}
+
+aws_region() {
+  region="$1"
+  shift
+  aws --endpoint-url "$endpoint" --region "$region" "$@" 2>/dev/null || true
+}
+
+echo ""
+echo "S3 buckets:"
+buckets="$(aws_global s3api list-buckets --query 'Buckets[].Name' --output text)"
+for b in $buckets; do
+  echo "  - removing bucket: $b"
+  aws_global s3 rm "s3://$b" --recursive >/dev/null 2>&1 || true
+  aws_global s3api delete-bucket --bucket "$b" >/dev/null 2>&1 || true
+done
+
+for region in $regions; do
+  echo ""
+  echo "Region ${region}:"
+
+  echo "  DynamoDB tables:"
+  tables="$(aws_region "$region" dynamodb list-tables --query 'TableNames[]' --output text)"
+  for t in $tables; do
+    echo "    - deleting table: $t"
+    aws_region "$region" dynamodb delete-table --table-name "$t" >/dev/null 2>&1 || true
+  done
+
+  echo "  SQS queues:"
+  queues="$(aws_region "$region" sqs list-queues --query 'QueueUrls[]' --output text)"
+  for q in $queues; do
+    echo "    - deleting queue: $q"
+    aws_region "$region" sqs delete-queue --queue-url "$q" >/dev/null 2>&1 || true
+  done
+
+  echo "  SNS topics:"
+  topics="$(aws_region "$region" sns list-topics --query 'Topics[].TopicArn' --output text)"
+  for t in $topics; do
+    echo "    - deleting topic: $t"
+    aws_region "$region" sns delete-topic --topic-arn "$t" >/dev/null 2>&1 || true
+  done
+
+  echo "  EventBridge rules:"
+  rules="$(aws_region "$region" events list-rules --query 'Rules[].Name' --output text)"
+  for r in $rules; do
+    targets="$(aws_region "$region" events list-targets-by-rule --rule "$r" --query 'Targets[].Id' --output text)"
+    for id in $targets; do
+      aws_region "$region" events remove-targets --rule "$r" --ids "$id" >/dev/null 2>&1 || true
+    done
+    aws_region "$region" events delete-rule --name "$r" >/dev/null 2>&1 || true
+  done
+
+  echo "  Scheduler schedules:"
+  schedules="$(aws_region "$region" scheduler list-schedules --query 'Schedules[].Name' --output text)"
+  for s in $schedules; do
+    aws_region "$region" scheduler delete-schedule --name "$s" --group-name default >/dev/null 2>&1 || true
+  done
+
+  echo "  Step Functions:"
+  sms="$(aws_region "$region" stepfunctions list-state-machines --query 'stateMachines[].stateMachineArn' --output text)"
+  for sm in $sms; do
+    aws_region "$region" stepfunctions delete-state-machine --state-machine-arn "$sm" >/dev/null 2>&1 || true
+  done
+
+  echo "  API Gateway REST APIs:"
+  apis="$(aws_region "$region" apigateway get-rest-apis --query 'items[].id' --output text)"
+  for api in $apis; do
+    aws_region "$region" apigateway delete-rest-api --rest-api-id "$api" >/dev/null 2>&1 || true
+  done
+
+  echo "  CloudFormation stacks:"
+  stacks="$(aws_region "$region" cloudformation list-stacks --query 'StackSummaries[?StackStatus!=`DELETE_COMPLETE`].StackName' --output text)"
+  for s in $stacks; do
+    aws_region "$region" cloudformation delete-stack --stack-name "$s" >/dev/null 2>&1 || true
+  done
+
+  echo "  Lambda functions:"
+  funcs="$(aws_region "$region" lambda list-functions --query 'Functions[].FunctionName' --output text)"
+  for f in $funcs; do
+    aws_region "$region" lambda delete-function --function-name "$f" >/dev/null 2>&1 || true
+  done
+
+  echo "  CloudWatch log groups:"
+  logs="$(aws_region "$region" logs describe-log-groups --query 'logGroups[].logGroupName' --output text)"
+  for lg in $logs; do
+    aws_region "$region" logs delete-log-group --log-group-name "$lg" >/dev/null 2>&1 || true
+  done
+
+  echo "  CloudWatch alarms:"
+  alarms="$(aws_region "$region" cloudwatch describe-alarms --query 'MetricAlarms[].AlarmName' --output text)"
+  for a in $alarms; do
+    aws_region "$region" cloudwatch delete-alarms --alarm-names "$a" >/dev/null 2>&1 || true
+  done
+
+  echo "  SSM parameters:"
+  params="$(aws_region "$region" ssm describe-parameters --query 'Parameters[].Name' --output text)"
+  for p in $params; do
+    aws_region "$region" ssm delete-parameter --name "$p" >/dev/null 2>&1 || true
+  done
+
+  echo "  AWS Config:"
+  recorders="$(aws_region "$region" configservice describe-configuration-recorders --query 'ConfigurationRecorders[].name' --output text)"
+  for r in $recorders; do
+    aws_region "$region" configservice stop-configuration-recorder --configuration-recorder-name "$r" >/dev/null 2>&1 || true
+    aws_region "$region" configservice delete-configuration-recorder --configuration-recorder-name "$r" >/dev/null 2>&1 || true
+  done
+  channels="$(aws_region "$region" configservice describe-delivery-channels --query 'DeliveryChannels[].name' --output text)"
+  for c in $channels; do
+    aws_region "$region" configservice delete-delivery-channel --delivery-channel-name "$c" >/dev/null 2>&1 || true
+  done
+
+  echo "  SES identities:"
+  ids="$(aws_region "$region" ses list-identities --query 'Identities[]' --output text)"
+  for i in $ids; do
+    aws_region "$region" ses delete-identity --identity "$i" >/dev/null 2>&1 || true
+  done
+
+  echo "  Redshift clusters:"
+  clusters="$(aws_region "$region" redshift describe-clusters --query 'Clusters[].ClusterIdentifier' --output text)"
+  for c in $clusters; do
+    aws_region "$region" redshift delete-cluster --cluster-identifier "$c" --skip-final-cluster-snapshot >/dev/null 2>&1 || true
+  done
+
+  echo "  OpenSearch domains:"
+  domains="$(aws_region "$region" opensearch list-domain-names --query 'DomainNames[].DomainName' --output text)"
+  for d in $domains; do
+    aws_region "$region" opensearch delete-domain --domain-name "$d" >/dev/null 2>&1 || true
+  done
+
+  echo "  Elasticsearch domains:"
+  domains="$(aws_region "$region" es list-domain-names --query 'DomainNames[].DomainName' --output text)"
+  for d in $domains; do
+    aws_region "$region" es delete-elasticsearch-domain --domain-name "$d" >/dev/null 2>&1 || true
+  done
+
+  echo "  EC2 instances:"
+  instances="$(aws_region "$region" ec2 describe-instances --query 'Reservations[].Instances[].InstanceId' --output text)"
+  for i in $instances; do
+    aws_region "$region" ec2 terminate-instances --instance-ids "$i" >/dev/null 2>&1 || true
+  done
+done
+
+echo ""
+echo "Route 53 zones:"
+if [ -x /opt/venv/bin/python ]; then
+  /opt/venv/bin/python - <<'PY'
+import json
+import os
+import subprocess
+
+endpoint = os.environ.get("LOCALSTACK_ENDPOINT", "http://localstack:4566")
+
+def aws(*args):
+    return subprocess.run(["aws", "--endpoint-url", endpoint, *args], capture_output=True, text=True)
+
+zones = aws("route53", "list-hosted-zones", "--query", "HostedZones[].Id", "--output", "text").stdout.split()
+for zid in zones:
+    r = aws("route53", "list-resource-record-sets", "--hosted-zone-id", zid, "--output", "json")
+    try:
+        data = json.loads(r.stdout)
+    except Exception:
+        data = {}
+    changes = []
+    for rr in data.get("ResourceRecordSets", []):
+        if rr.get("Type") in ("NS", "SOA"):
+            continue
+        changes.append({"Action": "DELETE", "ResourceRecordSet": rr})
+    if changes:
+        aws("route53", "change-resource-record-sets", "--hosted-zone-id", zid, "--change-batch", json.dumps({"Changes": changes}))
+    aws("route53", "delete-hosted-zone", "--id", zid)
+PY
+else
+  zones="$(aws_global route53 list-hosted-zones --query 'HostedZones[].Id' --output text)"
+  for zid in $zones; do
+    aws_global route53 delete-hosted-zone --id "$zid" >/dev/null 2>&1 || true
+  done
+fi
+
+echo ""
+echo "Route 53 resolver endpoints:"
+for region in $regions; do
+  endpoints="$(aws_region "$region" route53resolver list-resolver-endpoints --query 'ResolverEndpoints[].Id' --output text)"
+  for e in $endpoints; do
+    aws_region "$region" route53resolver delete-resolver-endpoint --resolver-endpoint-id "$e" >/dev/null 2>&1 || true
+  done
+done
+
+echo ""
+echo "IAM instance profiles:"
+if [ -n "${prefix}" ]; then
+  profiles="$(aws_global iam list-instance-profiles --query "InstanceProfiles[?starts_with(InstanceProfileName, '$prefix')].InstanceProfileName" --output text)"
+else
+  profiles="$(aws_global iam list-instance-profiles --query 'InstanceProfiles[].InstanceProfileName' --output text)"
+fi
+for p in $profiles; do
+  echo "  - deleting instance profile: $p"
+  roles="$(aws_global iam get-instance-profile --instance-profile-name "$p" --query 'InstanceProfile.Roles[].RoleName' --output text)"
+  for r in $roles; do
+    aws_global iam remove-role-from-instance-profile --instance-profile-name "$p" --role-name "$r" >/dev/null 2>&1 || true
+  done
+  aws_global iam delete-instance-profile --instance-profile-name "$p" >/dev/null 2>&1 || true
+done
+
+echo ""
+echo "IAM roles:"
+if [ -n "${prefix}" ]; then
+  roles="$(aws_global iam list-roles --query "Roles[?starts_with(RoleName, '$prefix')].RoleName" --output text)"
+else
+  roles="$(aws_global iam list-roles --query 'Roles[].RoleName' --output text)"
+fi
+for r in $roles; do
+  echo "  - deleting role: $r"
+  policies="$(aws_global iam list-role-policies --role-name "$r" --query 'PolicyNames[]' --output text)"
+  for p in $policies; do
+    aws_global iam delete-role-policy --role-name "$r" --policy-name "$p" >/dev/null 2>&1 || true
+  done
+  attached="$(aws_global iam list-attached-role-policies --role-name "$r" --query 'AttachedPolicies[].PolicyArn' --output text)"
+  for a in $attached; do
+    aws_global iam detach-role-policy --role-name "$r" --policy-arn "$a" >/dev/null 2>&1 || true
+  done
+  aws_global iam delete-role --role-name "$r" >/dev/null 2>&1 || true
+done
+
+echo ""
+echo "VPCs:"
+vpcs="$(aws_global ec2 describe-vpcs --query 'Vpcs[?IsDefault==`false`].VpcId' --output text)"
+for vpc in $vpcs; do
+  echo "  - deleting VPC: $vpc"
+  nat_gws="$(aws_global ec2 describe-nat-gateways --filter Name=vpc-id,Values="$vpc" --query 'NatGateways[].NatGatewayId' --output text)"
+  for nat in $nat_gws; do
+    aws_global ec2 delete-nat-gateway --nat-gateway-id "$nat" >/dev/null 2>&1 || true
+  done
+
+  enis="$(aws_global ec2 describe-network-interfaces --filters Name=vpc-id,Values="$vpc" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text)"
+  for eni in $enis; do
+    aws_global ec2 delete-network-interface --network-interface-id "$eni" >/dev/null 2>&1 || true
+  done
+
+  igws="$(aws_global ec2 describe-internet-gateways --filters Name=attachment.vpc-id,Values="$vpc" --query 'InternetGateways[].InternetGatewayId' --output text)"
+  for igw in $igws; do
+    aws_global ec2 detach-internet-gateway --internet-gateway-id "$igw" --vpc-id "$vpc" >/dev/null 2>&1 || true
+    aws_global ec2 delete-internet-gateway --internet-gateway-id "$igw" >/dev/null 2>&1 || true
+  done
+
+  subnets="$(aws_global ec2 describe-subnets --filters Name=vpc-id,Values="$vpc" --query 'Subnets[].SubnetId' --output text)"
+  for subnet in $subnets; do
+    aws_global ec2 delete-subnet --subnet-id "$subnet" >/dev/null 2>&1 || true
+  done
+
+  rts="$(aws_global ec2 describe-route-tables --filters Name=vpc-id,Values="$vpc" --query 'RouteTables[?Associations[?Main==`false`]].RouteTableId' --output text)"
+  for rt in $rts; do
+    aws_global ec2 delete-route-table --route-table-id "$rt" >/dev/null 2>&1 || true
+  done
+
+  sgs="$(aws_global ec2 describe-security-groups --filters Name=vpc-id,Values="$vpc" --query "SecurityGroups[?GroupName!='default'].GroupId" --output text)"
+  for sg in $sgs; do
+    aws_global ec2 delete-security-group --group-id "$sg" >/dev/null 2>&1 || true
+  done
+
+  aws_global ec2 delete-vpc --vpc-id "$vpc" >/dev/null 2>&1 || true
+done
+
+echo ""
+echo "Cleanup complete."

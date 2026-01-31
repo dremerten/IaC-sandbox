@@ -1,0 +1,23 @@
+# Ansible Configuration Summary
+
+Run: {{ run_id }}
+
+LocalStack endpoint: {{ localstack_endpoint }}
+
+Primary region: {{ primary_region }}
+- Bucket: {{ primary_bucket }}
+- VPC: {{ primary_vpc_id }}
+- Public subnets: {{ primary_public_subnet_ids | join(', ') }}
+- Private subnets: {{ primary_private_subnet_ids | join(', ') }}
+- ALB DNS: {{ primary_alb_dns }}
+- RDS endpoint: {{ primary_rds_endpoint }}
+
+Secondary region: {{ secondary_region }}
+- Bucket: {{ secondary_bucket }}
+- VPC: {{ secondary_vpc_id }}
+- Public subnets: {{ secondary_public_subnet_ids | join(', ') }}
+- Private subnets: {{ secondary_private_subnet_ids | join(', ') }}
+- ALB DNS: {{ secondary_alb_dns }}
+- RDS endpoint: {{ secondary_rds_endpoint }}
+
+simulate_unsupported: {{ simulate_unsupported }}

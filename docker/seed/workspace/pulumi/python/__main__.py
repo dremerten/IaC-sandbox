@@ -78,7 +78,7 @@ def provider_for(region: str):
         endpoints=endpoints,
         default_tags=aws.ProviderDefaultTagsArgs(
             tags={
-                "project": "sandbox",
+                "project": "iac-sandbox",
                 "env": "dev",
                 "region": region,
             }
@@ -90,7 +90,7 @@ def provider_for(region: str):
 
 class SimulatedResource(pulumi.ComponentResource):
     def __init__(self, name: str, outputs: dict, opts: pulumi.ResourceOptions | None = None):
-        super().__init__("sandbox:simulated:Resource", name, {}, opts)
+        super().__init__("iac-sandbox:simulated:Resource", name, {}, opts)
         self.register_outputs(outputs)
 
 
@@ -99,7 +99,7 @@ def build_region(prefix: str, region: str, cidr: str):
     opts = pulumi.ResourceOptions(provider=provider)
 
     tags = {
-        "project": "sandbox",
+        "project": "iac-sandbox",
         "env": "dev",
         "region": region,
         "component": prefix,
