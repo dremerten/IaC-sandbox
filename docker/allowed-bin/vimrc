@@ -1,0 +1,40 @@
+set nocompatible
+set noswapfile
+set nobackup
+set nowritebackup
+set backupcopy=yes
+set undofile
+set undodir=/tmp
+set directory=/tmp
+set viminfo=
+set shada=
+
+function! s:DisableNewFile() abort
+  if !filereadable(expand('%:p')) && !isdirectory(expand('%:p'))
+    setlocal buftype=nowrite
+    setlocal nomodifiable
+    setlocal readonly
+    echohl ErrorMsg | echo "Creating new files is disabled in this sandbox." | echohl None
+  endif
+endfunction
+
+augroup sandbox_no_new_files
+  autocmd!
+  autocmd BufNewFile * call s:DisableNewFile()
+augroup END
+
+function! s:GuardWrite(cmdline) abort
+  if a:cmdline =~# '^\s*\%(w\|write\)\s\+\S'
+    echohl ErrorMsg | echo "Writing to new files is disabled." | echohl None
+    return ''
+  endif
+  if a:cmdline =~# '^\s*saveas\>'
+    echohl ErrorMsg | echo "Writing to new files is disabled." | echohl None
+    return ''
+  endif
+  return a:cmdline
+endfunction
+
+cnoreabbrev <expr> w s:GuardWrite(getcmdline())
+cnoreabbrev <expr> write s:GuardWrite(getcmdline())
+cnoreabbrev <expr> saveas s:GuardWrite(getcmdline())

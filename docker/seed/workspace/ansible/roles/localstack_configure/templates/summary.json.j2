@@ -1,0 +1,23 @@
+{
+  "run_id": "{{ run_id }}",
+  "created_by": "ansible",
+  "localstack_endpoint": "{{ localstack_endpoint }}",
+  "primary": {
+    "region": "{{ primary_region }}",
+    "bucket": "{{ primary_bucket }}",
+    "vpc_id": "{{ primary_vpc_id }}",
+    "public_subnet_ids": {{ primary_public_subnet_ids | to_json }},
+    "private_subnet_ids": {{ primary_private_subnet_ids | to_json }},
+    "alb_dns": "{{ primary_alb_dns }}",
+    "rds_endpoint": "{{ primary_rds_endpoint }}"
+  },
+  "secondary": {
+    "region": "{{ secondary_region }}",
+    "bucket": "{{ secondary_bucket }}",
+    "vpc_id": "{{ secondary_vpc_id }}",
+    "public_subnet_ids": {{ secondary_public_subnet_ids | to_json }},
+    "private_subnet_ids": {{ secondary_private_subnet_ids | to_json }},
+    "alb_dns": "{{ secondary_alb_dns }}",
+    "rds_endpoint": "{{ secondary_rds_endpoint }}"
+  }
+}

@@ -1,0 +1,47 @@
+#!/bin/sh
+set -eu
+
+rand_between() {
+  min="$1"
+  max="$2"
+  seed="$(/bin/date +%s%N 2>/dev/null || /bin/date +%s)"
+  echo $((min + (seed % (max - min + 1))))
+}
+
+primary_octet="$(rand_between 2 200)"
+secondary_octet="$((primary_octet + 1))"
+primary_cidr="10.${primary_octet}.0.0/16"
+secondary_cidr="10.${secondary_octet}.0.0/16"
+
+name_suffix="$(rand_between 1000 9999)"
+name_prefix="iac-auto-${name_suffix}"
+
+az_count=3
+public_subnets=3
+private_subnets=3
+public_ips=256
+private_ips=256
+
+instance_type_choice="$(rand_between 1 12)"
+desired_instances="$(rand_between 2 8)"
+min_instances="$((desired_instances > 1 ? desired_instances - 1 : 1))"
+max_instances="$((desired_instances + 2))"
+
+cat <<EOF | /opt/allowed-bin/tf-interactive
+new
+${primary_cidr}
+${secondary_cidr}
+${name_prefix}
+${az_count}
+y
+${public_subnets}
+${public_ips}
+${private_subnets}
+${private_ips}
+${instance_type_choice}
+${desired_instances}
+${min_instances}
+${max_instances}
+y
+apply
+EOF

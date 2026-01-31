@@ -1,4 +1,28 @@
 #!/bin/sh
 set -eu
 
-exec /usr/bin/vim "$@"
+base="/home/sandbox/workspace"
+alt="/workspace"
+
+for arg in "$@"; do
+  case "$arg" in
+    -*) continue ;;
+    +*) continue ;;
+    /*)
+      case "$arg" in
+        "$base"|"$base"/*|"$alt"|"$alt"/*) ;;
+        *) echo "vim: access denied" >&2; exit 1 ;;
+      esac
+      ;;
+    *".."*) echo "vim: access denied" >&2; exit 1 ;;
+  esac
+
+  if [ "${arg#-}" = "$arg" ] && [ "${arg#+}" = "$arg" ]; then
+    if [ ! -e "$arg" ]; then
+      echo "vim: new file creation is disabled: $arg" >&2
+      exit 1
+    fi
+  fi
+done
+
+exec /usr/bin/vim -u /opt/allowed-bin/vimrc -i NONE "$@"

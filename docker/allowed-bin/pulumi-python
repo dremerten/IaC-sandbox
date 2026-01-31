@@ -8,4 +8,28 @@ export PULUMI_SKIP_UPDATE_CHECK=true
 export PULUMI_DISABLE_CHECKPOINTS=true
 export PULUMI_PYTHON_CMD=/opt/venv/bin/python
 
+default_project_dir=/workspace/pulumi/python
+use_default_dir=true
+
+for arg in "$@"; do
+  case "$arg" in
+    -C|--cwd|--dir)
+      use_default_dir=false
+      break
+      ;;
+    -C*|--cwd=*|--dir=*)
+      use_default_dir=false
+      break
+      ;;
+  esac
+done
+
+if [ "$use_default_dir" = "true" ]; then
+  if [ ! -f ./Pulumi.yaml ] && [ ! -f ./Pulumi.yml ]; then
+    if [ -f "${default_project_dir}/Pulumi.yaml" ] || [ -f "${default_project_dir}/Pulumi.yml" ]; then
+      set -- -C "${default_project_dir}" "$@"
+    fi
+  fi
+fi
+
 exec /workspace/.pulumi-cli/pulumi "$@"

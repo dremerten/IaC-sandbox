@@ -79,4 +79,4 @@ fi
 
 cd /home/sandbox/workspace
 
-exec /usr/local/bin/ttyd -p "${PORT}" -W /bin/bash -l
+exec /usr/local/bin/ttyd -p "${PORT}" -W -I /opt/ui/index.html /bin/bash -l

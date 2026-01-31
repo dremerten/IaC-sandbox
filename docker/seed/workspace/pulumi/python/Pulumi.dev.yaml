@@ -1,6 +1,6 @@
 config:
-  sandbox-ha-python:simulateUnsupported: true
-  sandbox-ha-python:primaryRegion: us-east-1
-  sandbox-ha-python:secondaryRegion: us-west-2
-  sandbox-ha-python:dbUsername: 66020dbb-0045-4799-b03f-fe7784a8fc03
-  sandbox-ha-python:dbPassword: 256c1349-01e3-4d22-b9d3-880d268a45ae
+  iac-sandbox-ha-python:simulateUnsupported: true
+  iac-sandbox-ha-python:primaryRegion: us-east-1
+  iac-sandbox-ha-python:secondaryRegion: us-west-2
+  iac-sandbox-ha-python:dbUsername: 66020dbb-0045-4799-b03f-fe7784a8fc03
+  iac-sandbox-ha-python:dbPassword: 256c1349-01e3-4d22-b9d3-880d268a45ae

@@ -1,0 +1,258 @@
+- name: Show infrastructure inputs from Terraform
+  ansible.builtin.debug:
+    msg:
+      - "LocalStack endpoint: {{ localstack_endpoint }}"
+      - "Primary bucket: {{ primary_bucket }}"
+      - "Secondary bucket: {{ secondary_bucket }}"
+      - "Primary VPC: {{ primary_vpc_id }}"
+      - "Secondary VPC: {{ secondary_vpc_id }}"
+      - "Primary public subnets: {{ primary_public_subnet_ids | join(',') }}"
+      - "Secondary public subnets: {{ secondary_public_subnet_ids | join(',') }}"
+      - "Primary private subnets: {{ primary_private_subnet_ids | join(',') }}"
+      - "Secondary private subnets: {{ secondary_private_subnet_ids | join(',') }}"
+      - "Primary ALB DNS: {{ primary_alb_dns }}"
+      - "Secondary ALB DNS: {{ secondary_alb_dns }}"
+      - "Primary RDS endpoint: {{ primary_rds_endpoint }}"
+      - "Secondary RDS endpoint: {{ secondary_rds_endpoint }}"
+      - "Simulate unsupported: {{ simulate_unsupported }}"
+
+- name: Write environment summary payload
+  ansible.builtin.template:
+    src: summary.json.j2
+    dest: "/workspace/.ansible/tmp/ansible-summary-{{ run_id }}.json"
+    mode: "0600"
+
+- name: Write environment summary markdown
+  ansible.builtin.template:
+    src: summary.md.j2
+    dest: "/workspace/.ansible/tmp/ansible-summary-{{ run_id }}.md"
+    mode: "0600"
+
+- name: Upload summary to primary bucket
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    s3api put-object
+    --bucket {{ primary_bucket }}
+    --key ansible/summary-{{ run_id }}.json
+    --body /workspace/.ansible/tmp/ansible-summary-{{ run_id }}.json
+  register: put_summary_primary
+  changed_when: put_summary_primary.rc == 0
+
+- name: Upload summary markdown to primary bucket
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    s3api put-object
+    --bucket {{ primary_bucket }}
+    --key ansible/summary-{{ run_id }}.md
+    --body /workspace/.ansible/tmp/ansible-summary-{{ run_id }}.md
+  register: put_summary_md_primary
+  changed_when: put_summary_md_primary.rc == 0
+
+- name: Upload summary to secondary bucket
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ secondary_region }}
+    s3api put-object
+    --bucket {{ secondary_bucket }}
+    --key ansible/summary-{{ run_id }}.json
+    --body /workspace/.ansible/tmp/ansible-summary-{{ run_id }}.json
+  register: put_summary_secondary
+  changed_when: put_summary_secondary.rc == 0
+
+- name: Upload summary markdown to secondary bucket
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ secondary_region }}
+    s3api put-object
+    --bucket {{ secondary_bucket }}
+    --key ansible/summary-{{ run_id }}.md
+    --body /workspace/.ansible/tmp/ansible-summary-{{ run_id }}.md
+  register: put_summary_md_secondary
+  changed_when: put_summary_md_secondary.rc == 0
+
+- name: Upload sample object to primary bucket
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    s3api put-object
+    --bucket {{ primary_bucket }}
+    --key ansible/hello.txt
+    --body {{ object_source }}
+  register: put_object_primary
+  changed_when: put_object_primary.rc == 0
+
+- name: Upload sample object to secondary bucket
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ secondary_region }}
+    s3api put-object
+    --bucket {{ secondary_bucket }}
+    --key ansible/hello.txt
+    --body {{ object_source }}
+  register: put_object_secondary
+  changed_when: put_object_secondary.rc == 0
+
+- name: Tag VPCs as configured by Ansible
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ item.region }}
+    ec2 create-tags
+    --resources {{ item.vpc_id }}
+    --tags Key=configured_by,Value=ansible Key=run_id,Value={{ run_id }}
+  loop:
+    - { region: "{{ primary_region }}", vpc_id: "{{ primary_vpc_id }}" }
+    - { region: "{{ secondary_region }}", vpc_id: "{{ secondary_vpc_id }}" }
+  register: tag_vpcs
+  changed_when: true
+
+- name: Tag primary public subnets
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    ec2 create-tags
+    --resources {{ item }}
+    --tags Key=configured_by,Value=ansible Key=run_id,Value={{ run_id }}
+  loop: "{{ primary_public_subnet_ids }}"
+  when: primary_public_subnet_ids | length > 0
+  register: tag_primary_subnets
+  changed_when: true
+
+- name: Tag secondary public subnets
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ secondary_region }}
+    ec2 create-tags
+    --resources {{ item }}
+    --tags Key=configured_by,Value=ansible Key=run_id,Value={{ run_id }}
+  loop: "{{ secondary_public_subnet_ids }}"
+  when: secondary_public_subnet_ids | length > 0
+  register: tag_secondary_subnets
+  changed_when: true
+
+- name: Tag primary private subnets
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    ec2 create-tags
+    --resources {{ item }}
+    --tags Key=configured_by,Value=ansible Key=run_id,Value={{ run_id }} Key=tier,Value=private
+  loop: "{{ primary_private_subnet_ids }}"
+  when: primary_private_subnet_ids | length > 0
+  register: tag_primary_private
+  changed_when: true
+
+- name: Tag secondary private subnets
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ secondary_region }}
+    ec2 create-tags
+    --resources {{ item }}
+    --tags Key=configured_by,Value=ansible Key=run_id,Value={{ run_id }} Key=tier,Value=private
+  loop: "{{ secondary_private_subnet_ids }}"
+  when: secondary_private_subnet_ids | length > 0
+  register: tag_secondary_private
+  changed_when: true
+
+- name: Write SSM parameters for app config
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ item.region }}
+    ssm put-parameter
+    --name {{ item.name }}
+    --type String
+    --value {{ item.value }}
+    --overwrite
+  loop:
+    - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/localstack_endpoint", value: "{{ localstack_endpoint }}" }
+    - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_bucket", value: "{{ primary_bucket }}" }
+    - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_bucket", value: "{{ secondary_bucket }}" }
+    - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_vpc", value: "{{ primary_vpc_id }}" }
+    - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_vpc", value: "{{ secondary_vpc_id }}" }
+    - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_subnets", value: "{{ primary_public_subnet_ids | join(',') }}" }
+    - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_subnets", value: "{{ secondary_public_subnet_ids | join(',') }}" }
+    - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_private_subnets", value: "{{ primary_private_subnet_ids | join(',') }}" }
+    - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_private_subnets", value: "{{ secondary_private_subnet_ids | join(',') }}" }
+    - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_alb_dns", value: "{{ primary_alb_dns }}" }
+    - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_alb_dns", value: "{{ secondary_alb_dns }}" }
+    - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/primary_rds_endpoint", value: "{{ primary_rds_endpoint }}" }
+    - { region: "{{ secondary_region }}", name: "/iac/{{ name_prefix }}/secondary_rds_endpoint", value: "{{ secondary_rds_endpoint }}" }
+    - { region: "{{ primary_region }}", name: "/iac/{{ name_prefix }}/simulate_unsupported", value: "{{ simulate_unsupported | string }}" }
+  register: put_ssm
+  changed_when: true
+
+- name: Discover DynamoDB tables for this run
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    dynamodb list-tables
+    --query "TableNames[?starts_with(@, '{{ name_prefix }}')]"
+    --output text
+  register: ddb_tables
+  changed_when: false
+  failed_when: false
+
+- name: Seed DynamoDB with a sample item
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    dynamodb put-item
+    --table-name {{ (ddb_tables.stdout.split() | first) }}
+    --item '{"pk":{"S":"ansible#{{ run_id }}"}, "message":{"S":"configured by ansible"}}'
+  when: ddb_tables.stdout | length > 0
+  register: ddb_put
+  changed_when: true
+
+- name: Discover SQS queues for this run
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    sqs list-queues
+    --query "QueueUrls[?contains(@, '{{ name_prefix }}')]"
+    --output text
+  register: sqs_queues
+  changed_when: false
+  failed_when: false
+
+- name: Send SQS message
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    sqs send-message
+    --queue-url {{ (sqs_queues.stdout.split() | first) }}
+    --message-body "ansible run {{ run_id }} configured resources"
+  when: sqs_queues.stdout | length > 0
+  register: sqs_send
+  changed_when: true
+
+- name: Discover SNS topics for this run
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    sns list-topics
+    --query "Topics[?contains(TopicArn, '{{ name_prefix }}')].TopicArn"
+    --output text
+  register: sns_topics
+  changed_when: false
+  failed_when: false
+
+- name: Publish SNS message
+  ansible.builtin.command: >-
+    aws --endpoint-url {{ localstack_endpoint }}
+    --region {{ primary_region }}
+    sns publish
+    --topic-arn {{ (sns_topics.stdout.split() | first) }}
+    --message "ansible run {{ run_id }} published"
+  when: sns_topics.stdout | length > 0
+  register: sns_publish
+  changed_when: true
+
+- name: Print Ansible completion recap
+  ansible.builtin.debug:
+    msg:
+      - "Ansible finished configuration for run {{ run_id }}."
+      - "S3: uploaded ansible/summary-{{ run_id }}.json + ansible/summary-{{ run_id }}.md + ansible/hello.txt"
+      - "SSM: wrote /iac/{{ name_prefix }}/* parameters"
+      - "EC2: tagged VPCs and public/private subnets"
+      - "DynamoDB/SQS/SNS: seeded demo data (when present)"
