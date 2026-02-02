@@ -1,0 +1,55 @@
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (defaults to the commit SHA)"
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_REPO: ${{ secrets.DOCKER_IMAGE_REPO }}
+
+jobs:
+  deploy_production:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure required secrets
+        run: |
+          test -n "${IMAGE_REPO}" || { echo "DOCKER_IMAGE_REPO secret is required"; exit 1; }
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Write kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_PROD_B64 }}
+        run: |
+          mkdir -p ~/.kube
+          echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Deploy to production
+        env:
+          ACME_EMAIL: ${{ secrets.ACME_EMAIL }}
+          ACME_MODE: ${{ secrets.ACME_MODE }}
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          APP_NAMESPACE: ${{ secrets.APP_NAMESPACE || 'iac-sandbox-prod' }}
+          PUBLIC_IP: ${{ secrets.PUBLIC_IP }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_EMAIL: ${{ secrets.DOCKERHUB_EMAIL }}
+          GATEWAY_NAMESPACE: ${{ secrets.GATEWAY_NAMESPACE }}
+          GATEWAY_SERVICE: ${{ secrets.GATEWAY_SERVICE }}
+          SANDBOX_IMAGE: ${{ env.IMAGE_REPO }}:${{ github.event.inputs.image_tag || github.sha }}
+        run: ./scripts/apply-staging.sh
