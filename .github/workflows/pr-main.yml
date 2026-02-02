@@ -1,0 +1,78 @@
+name: PR to main - Verify Image
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_REPO: ${{ secrets.DOCKER_IMAGE_REPO }}
+  IMAGE_TAG: ${{ github.event.pull_request.head.sha }}
+
+jobs:
+  verify_pr_image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure required secrets
+        run: |
+          test -n "${IMAGE_REPO}" || { echo "DOCKER_IMAGE_REPO secret is required"; exit 1; }
+          test -n "${{ secrets.DOCKERHUB_USERNAME }}" || { echo "DOCKERHUB_USERNAME secret is required"; exit 1; }
+          test -n "${{ secrets.DOCKERHUB_TOKEN }}" || { echo "DOCKERHUB_TOKEN secret is required"; exit 1; }
+
+      - name: Talisman scan
+        run: |
+          curl -sSL https://github.com/thoughtworks/talisman/releases/download/v1.29.2/talisman_linux_amd64 -o talisman
+          chmod +x talisman
+          ./talisman --scan
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull tested image
+        run: |
+          docker pull "${IMAGE_REPO}:${IMAGE_TAG}"
+
+      - name: Trivy image scan (CRITICAL only)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Docker tests
+        env:
+          IMAGE_REF: ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+          docker network create iac-test >/dev/null 2>&1 || true
+          trap 'docker rm -f iac-sandbox localstack >/dev/null 2>&1 || true; docker network rm iac-test >/dev/null 2>&1 || true' EXIT
+          docker run -d --name localstack --network iac-test -p 4566:4566 localstack/localstack:4.12.0
+          docker run -d --name iac-sandbox --network iac-test -p 5446:5446 \
+            -e PORT=5446 \
+            -e AWS_ACCESS_KEY_ID=test \
+            -e AWS_SECRET_ACCESS_KEY=test \
+            -e AWS_DEFAULT_REGION=us-east-1 \
+            -e LOCALSTACK_ENDPOINT=http://localstack:4566 \
+            -e AWS_EC2_METADATA_DISABLED=true \
+            "$IMAGE_REF"
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4566/_localstack/health >/dev/null; then break; fi
+            sleep 2
+          done
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:5446 >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:4566/_localstack/health >/dev/null
+          curl -fsS http://127.0.0.1:5446 >/dev/null

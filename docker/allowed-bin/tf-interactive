@@ -747,6 +747,7 @@ if [ "${action:-apply}" = "destroy" ]; then
   run_with_progress "🧹 Destroying infrastructure" "${tf_dir}/interactive.destroy.log" \
     /workspace/.terraform-bin/terraform -chdir="$tf_dir" destroy -auto-approve -var-file="$vars_file"
 else
+  echo "⏳ Provisioning can take 5+ minutes depending on selected services."
   run_with_progress "🚀 Building infrastructure" "${tf_dir}/interactive.apply.log" \
     /workspace/.terraform-bin/terraform -chdir="$tf_dir" apply -auto-approve -var-file="$vars_file"
   status=$?

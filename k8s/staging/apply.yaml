@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: iac-sandbox-staging
+  name: ${APP_NAMESPACE}
 ---
 apiVersion: v1
 kind: Secret
 metadata:
   name: iac-sandbox-secrets
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 type: Opaque
 stringData:
   aws_access_key_id: ${AWS_ACCESS_KEY_ID}
@@ -19,7 +19,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: dockerhub-pull
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 type: kubernetes.io/dockerconfigjson
 stringData:
   .dockerconfigjson: |
@@ -29,7 +29,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: iac-sandbox-sa
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 imagePullSecrets:
   - name: dockerhub-pull
 ---
@@ -37,7 +37,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: localstack
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 spec:
   replicas: 1
   selector:
@@ -78,7 +78,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: localstack
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 spec:
   selector:
     app: localstack
@@ -91,7 +91,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: iac-sandbox
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 spec:
   replicas: 1
   selector:
@@ -213,7 +213,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: iac-sandbox
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 spec:
   selector:
     app: iac-sandbox
@@ -226,7 +226,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: iac-sandbox-gw-external
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 spec:
   type: ClusterIP
   selector:
@@ -246,7 +246,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: iac-sandbox-gw
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 spec:
   gatewayClassName: nginx
   listeners:
@@ -273,7 +273,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: iac-sandbox-http
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 spec:
   parentRefs:
     - name: iac-sandbox-gw
@@ -295,7 +295,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: iac-sandbox-https
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 spec:
   parentRefs:
     - name: iac-sandbox-gw
@@ -326,14 +326,14 @@ spec:
           gatewayHTTPRoute:
             parentRefs:
               - name: iac-sandbox-gw
-                namespace: iac-sandbox-staging
+                namespace: ${APP_NAMESPACE}
                 kind: Gateway
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: iac-sandbox-tls
-  namespace: iac-sandbox-staging
+  namespace: ${APP_NAMESPACE}
 spec:
   secretName: iac-sandbox-tls
   issuerRef:

@@ -1,0 +1,125 @@
+name: Branch CI + Staging Deploy
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_REPO: ${{ secrets.DOCKER_IMAGE_REPO }}
+
+jobs:
+  build_test_scan:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tags.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure required secrets
+        run: |
+          test -n "${IMAGE_REPO}" || { echo "DOCKER_IMAGE_REPO secret is required"; exit 1; }
+          test -n "${{ secrets.DOCKERHUB_USERNAME }}" || { echo "DOCKERHUB_USERNAME secret is required"; exit 1; }
+          test -n "${{ secrets.DOCKERHUB_TOKEN }}" || { echo "DOCKERHUB_TOKEN secret is required"; exit 1; }
+
+      - name: Talisman scan
+        run: |
+          curl -sSL https://github.com/thoughtworks/talisman/releases/download/v1.29.2/talisman_linux_amd64 -o talisman
+          chmod +x talisman
+          ./talisman --scan
+
+      - name: Set image tags
+        id: tags
+        run: |
+          echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "BRANCH_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build image
+        run: |
+          docker build -t "${IMAGE_REPO}:${IMAGE_TAG}" -t "${IMAGE_REPO}:${BRANCH_TAG}" .
+
+      - name: Trivy image scan (CRITICAL only)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Docker tests
+        env:
+          IMAGE_REF: ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+          docker network create iac-test >/dev/null 2>&1 || true
+          trap 'docker rm -f iac-sandbox localstack >/dev/null 2>&1 || true; docker network rm iac-test >/dev/null 2>&1 || true' EXIT
+          docker run -d --name localstack --network iac-test -p 4566:4566 localstack/localstack:4.12.0
+          docker run -d --name iac-sandbox --network iac-test -p 5446:5446 \
+            -e PORT=5446 \
+            -e AWS_ACCESS_KEY_ID=test \
+            -e AWS_SECRET_ACCESS_KEY=test \
+            -e AWS_DEFAULT_REGION=us-east-1 \
+            -e LOCALSTACK_ENDPOINT=http://localstack:4566 \
+            -e AWS_EC2_METADATA_DISABLED=true \
+            "$IMAGE_REF"
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4566/_localstack/health >/dev/null; then break; fi
+            sleep 2
+          done
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:5446 >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:4566/_localstack/health >/dev/null
+          curl -fsS http://127.0.0.1:5446 >/dev/null
+
+      - name: Push image
+        run: |
+          docker push "${IMAGE_REPO}:${IMAGE_TAG}"
+          docker push "${IMAGE_REPO}:${BRANCH_TAG}"
+
+  deploy_staging:
+    needs: build_test_scan
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Write kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_STAGING_B64 }}
+        run: |
+          mkdir -p ~/.kube
+          echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Deploy to staging
+        env:
+          ACME_EMAIL: ${{ secrets.ACME_EMAIL }}
+          ACME_MODE: ${{ secrets.ACME_MODE }}
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          APP_NAMESPACE: ${{ secrets.APP_NAMESPACE || 'iac-sandbox-staging' }}
+          PUBLIC_IP: ${{ secrets.PUBLIC_IP }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_EMAIL: ${{ secrets.DOCKERHUB_EMAIL }}
+          GATEWAY_NAMESPACE: ${{ secrets.GATEWAY_NAMESPACE }}
+          GATEWAY_SERVICE: ${{ secrets.GATEWAY_SERVICE }}
+          SANDBOX_IMAGE: ${{ env.IMAGE_REPO }}:${{ needs.build_test_scan.outputs.image_tag }}
+        run: ./scripts/apply-staging.sh
