@@ -10,7 +10,6 @@ permissions:
 
 env:
   IMAGE_REPO: ${{ secrets.DOCKER_IMAGE_REPO }}
-  IMAGE_TAG: ${{ github.event.pull_request.head.sha }}
 
 jobs:
   verify_pr_image:
@@ -25,6 +24,14 @@ jobs:
           test -n "${IMAGE_REPO}" || { echo "DOCKER_IMAGE_REPO secret is required"; exit 1; }
           test -n "${{ secrets.DOCKERHUB_USERNAME }}" || { echo "DOCKERHUB_USERNAME secret is required"; exit 1; }
           test -n "${{ secrets.DOCKERHUB_TOKEN }}" || { echo "DOCKERHUB_TOKEN secret is required"; exit 1; }
+
+      - name: Set image tag
+        run: |
+          short_sha="${{ github.event.pull_request.head.sha }}"
+          short_sha="${short_sha:0:6}"
+          safe_branch="$(echo "${{ github.event.pull_request.head.ref }}" | tr '/@' '-' | tr -cd '[:alnum:]._-')"
+          safe_branch="${safe_branch:-branch}"
+          echo "IMAGE_TAG=${safe_branch}-${short_sha}" >> "$GITHUB_ENV"
 
       - name: Talisman scan
         run: |

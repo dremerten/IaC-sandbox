@@ -52,7 +52,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.meta.outputs.image_tag }}
-      branch_tag: ${{ steps.meta.outputs.branch_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,18 +64,20 @@ jobs:
       - name: Set image tags
         id: meta
         run: |
-          echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "branch_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
-          echo "BRANCH_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          short_sha="${GITHUB_SHA:0:6}"
+          safe_branch="$(echo "${GITHUB_REF_NAME}" | tr '/@' '-' | tr -cd '[:alnum:]._-')"
+          safe_branch="${safe_branch:-branch}"
+          image_tag="${safe_branch}-${short_sha}"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_TAG=${image_tag}" >> "$GITHUB_ENV"
 
       - name: Build image
         run: |
-          docker build --pull -t "${IMAGE_REPO}:${IMAGE_TAG}" -t "${IMAGE_REPO}:${BRANCH_TAG}" .
+          docker build --pull -t "${IMAGE_REPO}:${IMAGE_TAG}" .
 
       - name: Save image artifact
         run: |
-          docker save "${IMAGE_REPO}:${IMAGE_TAG}" "${IMAGE_REPO}:${BRANCH_TAG}" | gzip -1 > image.tar.gz
+          docker save "${IMAGE_REPO}:${IMAGE_TAG}" | gzip -1 > image.tar.gz
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
@@ -155,7 +156,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       IMAGE_TAG: ${{ needs.build_image.outputs.image_tag }}
-      BRANCH_TAG: ${{ needs.build_image.outputs.branch_tag }}
     steps:
       - name: Ensure required secrets
         run: |
@@ -181,7 +181,6 @@ jobs:
       - name: Push image
         run: |
           docker push "${IMAGE_REPO}:${IMAGE_TAG}"
-          docker push "${IMAGE_REPO}:${BRANCH_TAG}"
 
   deploy_staging:
     needs: [push_image, build_image]
