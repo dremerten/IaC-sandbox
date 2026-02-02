@@ -24,16 +24,16 @@ fileignoreconfig:
   checksum: cc1e6f0b8e2c569f624bb4de50016f4826b183153274e8d059b8c1025396b72d
   ignore_detectors: [filecontent, filename, filesize]
 - filename: .github/workflows/pr-main.yml
-  checksum: 4f70ecfdac0ed4650c1ee62ded9f739e3e225f65fe7e335af8a625208647ea0c
+  checksum: cbf61ad3057386bbea274a8182cee954647d5e4b85de4649fabf7ce62c339929
   ignore_detectors: [filecontent, filename, filesize]
 - filename: .github/workflows/ci-branch-staging.yml
-  checksum: 7636c306c2408e20bc706a6c2e3e30d9e27bb380f54e8bd86dad7cc148976a4f
+  checksum: a3ad822db64139151803f6a6351f1e42ae5c3f23e31e51793bacb7df733a9099
   ignore_detectors: [filecontent, filename, filesize]
 - filename: .custom_secrets.txt.example
   checksum: fb3232765bfdf07538e30bc39c29a3f64fa6e85f227ddcf818b5cce6c749e34c
   ignore_detectors: [filecontent, filename, filesize]
 - filename: Dockerfile
-  checksum: 9a7572497f8a8c30183a22bc6f18d6fe204fc6c91cf2bba7c589436a64488e3b
+  checksum: 90cca7ed7a9463d38bc0496c344b285a80ddbe547bec314304cbb2d6b7409896
   ignore_detectors: [filecontent, filename, filesize]
 - filename: docker-compose.yml
   checksum: 10e46d6c6e756891dd7d5d8300dd59238084814dbcfaa991d065462f05a0f355
@@ -58,5 +58,11 @@ fileignoreconfig:
   ignore_detectors: [filecontent, filename, filesize]
 - filename: docker/seed/workspace/terraform/modules/s3_bucket/main.tf
   checksum: d1b8535b957f64453d5c4e9858099663113b4f72241affca43be6102b4196ec3
+  ignore_detectors: [filecontent, filename, filesize]
+- filename: scripts/apply-staging.sh
+  checksum: 89272faf961d642ff8047aa925a5611e2ab801d60993cc4392cded6ad0b8cb51
+  ignore_detectors: [filecontent, filename, filesize]
+- filename: scripts/build-push-staging.sh
+  checksum: 9b08931ada5d0ac909e615fb2d9ef49d14f0fb9ec8595c9ee18a99a3ac820888
   ignore_detectors: [filecontent, filename, filesize]
 version: "1.0"
