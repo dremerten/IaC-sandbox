@@ -73,4 +73,4 @@ jobs:
           GATEWAY_NAMESPACE: ${{ secrets.GATEWAY_NAMESPACE }}
           GATEWAY_SERVICE: ${{ secrets.GATEWAY_SERVICE }}
           SANDBOX_IMAGE: ${{ env.IMAGE_REPO }}:${{ env.RELEASE_TAG }}
-        run: ./scripts/apply-staging.sh
+        run: ./scripts/apply-prod.sh

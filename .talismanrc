@@ -33,10 +33,10 @@ fileignoreconfig:
   checksum: 95b61a1d1036a1aedec9fc5cf2712d4498e74ed5b69403b641ac61905c652739
   ignore_detectors: [filecontent, filename, filesize]
 - filename: .github/workflows/deploy-prod.yml
-  checksum: bed93fc42535d816e3a2d2fc3b0cf4cf2ca68bb6ac0b7bfd36507f6f2d9c4914
+  checksum: da37cde7c3d961903e9471f3b5a0c047a9bd806a72cff0f7fc71f0046495cd8b
   ignore_detectors: [filecontent, filename, filesize]
 - filename: .github/workflows/rollback-prod.yml
-  checksum: 1bdba861397d7e317e3ad7f1aab74b0cba02902b3dc4dea692649a5406020d37
+  checksum: b75d87e4844d5997972a00e33919498b4b28da764ff120e7b4e579ad9ae89a74
   ignore_detectors: [filecontent, filename, filesize]
 - filename: .custom_secrets.txt.example
   checksum: fb3232765bfdf07538e30bc39c29a3f64fa6e85f227ddcf818b5cce6c749e34c
@@ -69,9 +69,15 @@ fileignoreconfig:
   checksum: d1b8535b957f64453d5c4e9858099663113b4f72241affca43be6102b4196ec3
   ignore_detectors: [filecontent, filename, filesize]
 - filename: scripts/apply-staging.sh
-  checksum: 89272faf961d642ff8047aa925a5611e2ab801d60993cc4392cded6ad0b8cb51
+  checksum: 9249e2f8c938b434ece7cce9b3ab7b53364607970ac3fba3c0575d2e81e9d7d4
+  ignore_detectors: [filecontent, filename, filesize]
+- filename: scripts/apply-prod.sh
+  checksum: 0c3bcd3162a38223b82e3d384d6259d4566a3a82d07869494d15188bf9c10d37
   ignore_detectors: [filecontent, filename, filesize]
 - filename: scripts/build-push-staging.sh
   checksum: 9b08931ada5d0ac909e615fb2d9ef49d14f0fb9ec8595c9ee18a99a3ac820888
+  ignore_detectors: [filecontent, filename, filesize]
+- filename: k8s/prod/apply.yaml
+  checksum: dd1b142baaad966cb57651859575dee2ebd5729b96c55a74c46b9ae4bc8535b9
   ignore_detectors: [filecontent, filename, filesize]
 version: "1.0"

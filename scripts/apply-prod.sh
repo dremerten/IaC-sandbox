@@ -34,11 +34,11 @@ if [ -z "${SANDBOX_IMAGE:-}" ]; then
   exit 1
 fi
 
-APP_NAMESPACE="${APP_NAMESPACE:-iac-sandbox-staging}"
-GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-$APP_NAMESPACE}"
-GATEWAY_SERVICE="${GATEWAY_SERVICE:-iac-sandbox-gw-external}"
+APP_NAMESPACE="${APP_NAMESPACE:-iac-sandbox-prod}"
+GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-nginx-gateway}"
+GATEWAY_SERVICE="${GATEWAY_SERVICE:-global-gateway-nginx}"
 
-ACME_MODE="${ACME_MODE:-staging}"
+ACME_MODE="${ACME_MODE:-prod}"
 case "$ACME_MODE" in
   staging)
     ACME_ISSUER_NAME="${ACME_ISSUER_NAME:-letsencrypt-staging}"
@@ -72,10 +72,14 @@ DOCKER_CONFIG_JSON="$(printf '{\"auths\":{\"https://index.docker.io/v1/\":{\"use
   "$DOCKERHUB_USERNAME" "$DOCKERHUB_TOKEN" "${DOCKERHUB_EMAIL:-}" "$auth_b64")"
 export DOCKER_CONFIG_JSON
 
-envsubst < "$root_dir/k8s/staging/apply.yaml" | kubectl apply -f -
+envsubst < "$root_dir/k8s/prod/apply.yaml" | kubectl apply -f -
 
 if [ -n "${PUBLIC_IP:-}" ]; then
-  kubectl -n "$GATEWAY_NAMESPACE" patch svc "$GATEWAY_SERVICE" \
-    --type merge \
-    -p "{\"spec\":{\"externalIPs\":[\"$PUBLIC_IP\"]}}"
+  if kubectl -n "$GATEWAY_NAMESPACE" get svc "$GATEWAY_SERVICE" >/dev/null 2>&1; then
+    kubectl -n "$GATEWAY_NAMESPACE" patch svc "$GATEWAY_SERVICE" \
+      --type merge \
+      -p "{\"spec\":{\"externalIPs\":[\"$PUBLIC_IP\"]}}"
+  else
+    echo "Gateway Service $GATEWAY_NAMESPACE/$GATEWAY_SERVICE not found; skipping externalIP patch" >&2
+  fi
 fi
