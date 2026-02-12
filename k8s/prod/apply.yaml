@@ -1,0 +1,280 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${APP_NAMESPACE}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iac-sandbox-secrets
+  namespace: ${APP_NAMESPACE}
+type: Opaque
+stringData:
+  aws_access_key_id: ${AWS_ACCESS_KEY_ID}
+  aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+  db_username: ${DB_USERNAME}
+  db_password: ${DB_PASSWORD}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dockerhub-pull
+  namespace: ${APP_NAMESPACE}
+type: kubernetes.io/dockerconfigjson
+stringData:
+  .dockerconfigjson: |
+    ${DOCKER_CONFIG_JSON}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: iac-sandbox-sa
+  namespace: ${APP_NAMESPACE}
+imagePullSecrets:
+  - name: dockerhub-pull
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: localstack
+  namespace: ${APP_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: localstack
+  template:
+    metadata:
+      labels:
+        app: localstack
+    spec:
+      containers:
+        - name: localstack
+          image: localstack/localstack:4.12.0
+          imagePullPolicy: Always
+          env:
+            - name: SERVICES
+              value: s3,sts,iam,lambda,ec2,dynamodb,dynamodbstreams,es,opensearch,redshift,sqs,sns,events,scheduler,ses,stepfunctions,apigateway,route53,route53resolver,cloudformation,cloudwatch,logs,ssm,config
+            - name: DEBUG
+              value: "0"
+          ports:
+            - name: edge
+              containerPort: 4566
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          volumeMounts:
+            - name: localstack-data
+              mountPath: /var/lib/localstack
+      volumes:
+        - name: localstack-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack
+  namespace: ${APP_NAMESPACE}
+spec:
+  selector:
+    app: localstack
+  ports:
+    - name: edge
+      port: 4566
+      targetPort: 4566
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iac-sandbox
+  namespace: ${APP_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iac-sandbox
+  template:
+    metadata:
+      labels:
+        app: iac-sandbox
+    spec:
+      serviceAccountName: iac-sandbox-sa
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: iac-sandbox
+          image: ${SANDBOX_IMAGE}
+          imagePullPolicy: Always
+          env:
+            - name: PORT
+              value: "5446"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: iac-sandbox-secrets
+                  key: aws_access_key_id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: iac-sandbox-secrets
+                  key: aws_secret_access_key
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: LOCALSTACK_ENDPOINT
+              value: http://localstack:4566
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: iac-sandbox-secrets
+                  key: db_username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: iac-sandbox-secrets
+                  key: db_password
+            - name: TF_VAR_aws_access_key_id
+              valueFrom:
+                secretKeyRef:
+                  name: iac-sandbox-secrets
+                  key: aws_access_key_id
+            - name: TF_VAR_aws_secret_access_key
+              valueFrom:
+                secretKeyRef:
+                  name: iac-sandbox-secrets
+                  key: aws_secret_access_key
+            - name: TF_VAR_db_username
+              valueFrom:
+                secretKeyRef:
+                  name: iac-sandbox-secrets
+                  key: db_username
+            - name: TF_VAR_db_password
+              valueFrom:
+                secretKeyRef:
+                  name: iac-sandbox-secrets
+                  key: db_password
+          ports:
+            - name: http
+              containerPort: 5446
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          readinessProbe:
+            tcpSocket:
+              port: 5446
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 5446
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /run
+            - name: var-tmp
+              mountPath: /var/tmp
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: workspace
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: var-tmp
+          emptyDir: {}
+        - name: shm
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iac-sandbox
+  namespace: ${APP_NAMESPACE}
+spec:
+  selector:
+    app: iac-sandbox
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5446
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: iac-sandbox-http-redirect
+  namespace: ${APP_NAMESPACE}
+spec:
+  parentRefs:
+    - name: global-gateway
+      namespace: nginx-gateway
+      sectionName: acme-http
+  hostnames:
+    - ${APP_DOMAIN}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: iac-sandbox
+  namespace: ${APP_NAMESPACE}
+spec:
+  parentRefs:
+    - name: global-gateway
+      namespace: nginx-gateway
+      sectionName: iac-sandbox-prod
+  hostnames:
+    - ${APP_DOMAIN}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: iac-sandbox
+          port: 80
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: iac-sandbox-prod-cert
+  namespace: nginx-gateway
+spec:
+  secretName: iac-sandbox-prod-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-gateway
+  dnsNames:
+    - ${APP_DOMAIN}
