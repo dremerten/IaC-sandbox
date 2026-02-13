@@ -65,6 +65,20 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Wait for tested image tag
+        run: |
+          set -euo pipefail
+          for i in {1..30}; do
+            if docker manifest inspect "${IMAGE_REPO}:${IMAGE_TAG}" >/dev/null 2>&1; then
+              echo "Found ${IMAGE_REPO}:${IMAGE_TAG}"
+              exit 0
+            fi
+            echo "Waiting for ${IMAGE_REPO}:${IMAGE_TAG} to be available... ($i/30)"
+            sleep 10
+          done
+          echo "Image ${IMAGE_REPO}:${IMAGE_TAG} not found after waiting." >&2
+          exit 1
+
       - name: Pull tested image
         run: |
           docker pull "${IMAGE_REPO}:${IMAGE_TAG}"
